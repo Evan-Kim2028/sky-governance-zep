@@ -1,0 +1,219 @@
+from datetime import datetime, timezone, timedelta
+from unittest.mock import patch, MagicMock, call
+import pytest
+from governance.fetchers import (
+    fetch_governance_categories,
+    fetch_all_topics_since,
+    fetch_topic_posts,
+    fetch_polls_paginated,
+    fetch_poll_tally,
+    fetch_executives,
+)
+
+
+def mock_response(json_data, status_code=200):
+    m = MagicMock()
+    m.raise_for_status.return_value = None
+    m.json.return_value = json_data
+    m.status_code = status_code
+    return m
+
+
+# ── fetch_governance_categories ───────────────────────────────────────────────
+
+CATEGORIES_PAYLOAD = {
+    "category_list": {
+        "categories": [
+            {"id": 5, "name": "Governance", "slug": "governance", "topic_count": 200},
+            {"id": 10, "name": "General Chat", "slug": "general-chat", "topic_count": 50},
+            {"id": 15, "name": "Risk", "slug": "risk", "topic_count": 80},
+            {"id": 20, "name": "MIPs", "slug": "mips", "topic_count": 300},
+        ]
+    }
+}
+
+
+def test_fetch_governance_categories_includes_governance_and_risk():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(CATEGORIES_PAYLOAD)):
+        cats = fetch_governance_categories()
+    names = [c["name"] for c in cats]
+    assert "Governance" in names
+    assert "Risk" in names
+    assert "MIPs" in names
+
+
+def test_fetch_governance_categories_excludes_general():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(CATEGORIES_PAYLOAD)):
+        cats = fetch_governance_categories()
+    names = [c["name"] for c in cats]
+    assert "General Chat" not in names
+
+
+# ── fetch_all_topics_since ────────────────────────────────────────────────────
+
+RECENT_TOPIC = {"id": 100, "title": "New MIP", "created_at": "2025-01-01T00:00:00.000Z", "tags": []}
+OLD_TOPIC    = {"id": 101, "title": "Old MIP", "created_at": "2020-01-01T00:00:00.000Z", "tags": []}
+TOPICS_PAGE_PAYLOAD = {"topic_list": {"topics": [RECENT_TOPIC, OLD_TOPIC]}}
+EMPTY_PAGE_PAYLOAD  = {"topic_list": {"topics": []}}
+
+
+def test_fetch_all_topics_since_filters_old_topics():
+    cutoff = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    with patch("governance.fetchers.requests.get", side_effect=[
+        mock_response(TOPICS_PAGE_PAYLOAD),
+        mock_response(EMPTY_PAGE_PAYLOAD),
+    ]):
+        topics = fetch_all_topics_since(5, "governance", since=cutoff, max_pages=2)
+    titles = [t["title"] for t in topics]
+    assert "New MIP" in titles
+    assert "Old MIP" not in titles
+
+
+def test_fetch_all_topics_since_stops_on_empty_page():
+    cutoff = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    with patch("governance.fetchers.requests.get", side_effect=[
+        mock_response(EMPTY_PAGE_PAYLOAD),
+    ]) as mock_get:
+        topics = fetch_all_topics_since(5, "governance", since=cutoff, max_pages=5)
+    assert topics == []
+    assert mock_get.call_count == 1  # stopped after first empty page
+
+
+def test_fetch_all_topics_since_respects_max_pages():
+    cutoff = datetime(2020, 1, 1, tzinfo=timezone.utc)  # old cutoff — accept everything
+    page_payload = {"topic_list": {"topics": [RECENT_TOPIC]}}
+    with patch("governance.fetchers.requests.get", return_value=mock_response(page_payload)) as mock_get:
+        fetch_all_topics_since(5, "governance", since=cutoff, max_pages=3)
+    assert mock_get.call_count == 3
+
+
+# ── fetch_topic_posts ─────────────────────────────────────────────────────────
+
+TOPIC_PAYLOAD = {
+    "post_stream": {
+        "posts": [
+            {"cooked": "<p>This allocates 500M DAI to T-bills.</p>", "username": "alice"},
+            {"cooked": "<p>Risk team supports with caveats.</p>", "username": "risk"},
+            {"cooked": "<p>Community vote should proceed.</p>", "username": "bob"},
+        ]
+    }
+}
+
+
+def test_fetch_topic_posts_returns_all_html_strings():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(TOPIC_PAYLOAD)):
+        posts = fetch_topic_posts(100)
+    assert len(posts) == 3
+    assert posts[0] == "<p>This allocates 500M DAI to T-bills.</p>"
+    assert posts[1] == "<p>Risk team supports with caveats.</p>"
+    assert posts[2] == "<p>Community vote should proceed.</p>"
+
+
+def test_fetch_topic_posts_returns_empty_list_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("connection refused")):
+        posts = fetch_topic_posts(100)
+    assert posts == []
+
+
+def test_fetch_topic_posts_returns_empty_list_when_no_posts():
+    with patch("governance.fetchers.requests.get", return_value=mock_response({"post_stream": {"posts": []}})):
+        posts = fetch_topic_posts(100)
+    assert posts == []
+
+
+def test_fetch_topic_posts_skips_posts_without_cooked():
+    payload = {"post_stream": {"posts": [
+        {"cooked": "<p>Has content.</p>", "username": "alice"},
+        {"username": "bob"},  # no cooked field
+    ]}}
+    with patch("governance.fetchers.requests.get", return_value=mock_response(payload)):
+        posts = fetch_topic_posts(100)
+    assert len(posts) == 1
+
+
+# ── fetch_polls_paginated ─────────────────────────────────────────────────────
+
+PAGE_A = [
+    {"pollId": 1, "title": "Poll A1", "slug": "a1", "startDate": "2023-01-01T00:00:00.000Z"},
+    {"pollId": 2, "title": "Poll A2", "slug": "a2", "startDate": "2023-02-01T00:00:00.000Z"},
+]
+PAGE_B = [
+    {"pollId": 3, "title": "Poll B1", "slug": "b1", "startDate": "2022-01-01T00:00:00.000Z"},
+]
+
+
+def test_fetch_polls_paginated_collects_across_pages():
+    with patch("governance.fetchers.requests.get", side_effect=[
+        mock_response(PAGE_A),
+        mock_response(PAGE_B),
+        mock_response([]),  # empty = done
+    ]):
+        polls = fetch_polls_paginated(max_polls=100)
+    assert len(polls) == 3
+    assert polls[0]["title"] == "Poll A1"
+    assert polls[2]["title"] == "Poll B1"
+
+
+def test_fetch_polls_paginated_stops_on_empty_page():
+    with patch("governance.fetchers.requests.get", side_effect=[
+        mock_response(PAGE_A),
+        mock_response([]),
+    ]) as mock_get:
+        fetch_polls_paginated(max_polls=100)
+    assert mock_get.call_count == 2
+
+
+def test_fetch_polls_paginated_respects_max_polls():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(PAGE_A)):
+        polls = fetch_polls_paginated(max_polls=1)
+    assert len(polls) == 1
+
+
+def test_fetch_polls_paginated_handles_dict_response():
+    with patch("governance.fetchers.requests.get", side_effect=[
+        mock_response({"polls": PAGE_A}),
+        mock_response([]),
+    ]):
+        polls = fetch_polls_paginated(max_polls=100)
+    assert len(polls) == 2
+
+
+# ── fetch_poll_tally ──────────────────────────────────────────────────────────
+
+TALLY_PAYLOAD = {
+    "results": [{"optionName": "Yes", "mkrSupport": "45000"}],
+    "totalMkrActiveParticipation": "52000",
+}
+
+
+def test_fetch_poll_tally_returns_dict():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(TALLY_PAYLOAD)):
+        tally = fetch_poll_tally(1056)
+    assert tally["totalMkrActiveParticipation"] == "52000"
+
+
+def test_fetch_poll_tally_returns_none_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("404")):
+        tally = fetch_poll_tally(9999)
+    assert tally is None
+
+
+# ── fetch_executives ──────────────────────────────────────────────────────────
+
+EXECUTIVES_PAYLOAD = [
+    {"key": "2023-01-15", "title": "Onboard wBTC-A", "date": "2023-01-15", "passed": True, "mkrSupport": "50000"},
+    {"key": "2023-02-01", "title": "Update Stability Fees", "date": "2023-02-01", "passed": True, "mkrSupport": "30000"},
+]
+
+
+def test_fetch_executives_list_response():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(EXECUTIVES_PAYLOAD)):
+        execs = fetch_executives(limit=5)
+    assert len(execs) == 2
+    assert execs[0]["title"] == "Onboard wBTC-A"
+
+
+def test_fetch_executives_respects_limit():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(EXECUTIVES_PAYLOAD)):
+        execs = fetch_executives(limit=1)
+    assert len(execs) == 1
