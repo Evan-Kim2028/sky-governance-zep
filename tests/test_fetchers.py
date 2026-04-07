@@ -414,7 +414,7 @@ TALLY_WITH_VOTES = {
 }
 
 
-def test_fetch_delegates_returns_name_to_address_map():
+def test_fetch_delegates_returns_address_to_name_map():
     with patch("governance.fetchers.requests.get", return_value=mock_response(DELEGATES_PAYLOAD)):
         delegates = fetch_delegates()
     assert "0xabc000" in delegates
@@ -450,6 +450,24 @@ def test_fetch_poll_voters_labels_unknown_addresses():
         voters = fetch_poll_voters(poll_id=1246, poll_title="Test Poll")
     unknown = next(v for v in voters if v["voter_address"] == "0xunknown")
     assert unknown["delegate_name"].startswith("0x")
+
+
+def test_fetch_poll_voters_handles_null_voter_address():
+    tally_with_null = {
+        "results": [{"optionId": 1, "optionName": "Yes", "mkrSupport": "100"}],
+        "votesByAddress": [
+            {"voter": None, "optionIdRaw": "1", "mkrSupport": "100.0",
+             "blockTimestamp": "2026-01-13T16:00:00+00:00"},
+        ],
+    }
+    with patch("governance.fetchers.requests.get") as mock_get:
+        mock_get.side_effect = [
+            mock_response(DELEGATES_PAYLOAD),
+            mock_response(tally_with_null),
+        ]
+        voters = fetch_poll_voters(poll_id=999, poll_title="Test")
+    assert len(voters) == 1
+    assert voters[0]["delegate_name"] == "unknown"
 
 
 def test_fetch_poll_voters_returns_empty_on_tally_error():

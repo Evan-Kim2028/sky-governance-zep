@@ -227,7 +227,7 @@ def fetch_poll_voters(poll_id: int, poll_title: str) -> list[dict]:
         addr = (v.get("voter") or "").lower()
         option_id = str(v.get("optionIdRaw", ""))
         records.append({
-            "delegate_name": address_to_name.get(addr, addr[:10] + "..."),
+            "delegate_name": address_to_name.get(addr, (addr[:10] + "...") if addr else "unknown"),
             "voter_address": addr,
             "option_name": option_map.get(option_id, f"option-{option_id}"),
             "mkr_support": v.get("mkrSupport", "?"),

@@ -180,7 +180,7 @@ def delegate_vote_to_episode(record: dict) -> dict:
     return {
         "data": text,
         "type": "text",
-        "created_at": voted_at,
+        "created_at": _parse_date(voted_at),
         "source_description": f"delegate-vote-{poll_id}-{voter_address}",
     }
 
