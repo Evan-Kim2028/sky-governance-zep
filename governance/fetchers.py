@@ -143,10 +143,13 @@ def fetch_poll_tally(poll_id: int) -> dict | None:
 
 def fetch_executives(limit: int = 50) -> list[dict]:
     """Return up to `limit` executive proposals from vote.makerdao.com."""
-    data = _get(f"{VOTE_BASE}/api/executive")
-    if isinstance(data, list):
-        return data[:limit]
-    return []
+    try:
+        data = _get(f"{VOTE_BASE}/api/executive")
+        if isinstance(data, list):
+            return data[:limit]
+        return []
+    except Exception:
+        return []
 
 
 def fetch_top_posters(

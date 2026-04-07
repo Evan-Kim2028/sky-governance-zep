@@ -1,6 +1,10 @@
 # governance/ingest.py
+import logging
+
 from zep_cloud import Zep
 from zep_cloud.core.api_error import ApiError
+
+log = logging.getLogger(__name__)
 
 ZEP_USER_ID = "mkr-sky-governance-analyst"
 
@@ -27,8 +31,6 @@ def ingest_episodes(client: Zep, episodes: list[dict | None], user_id: str = ZEP
 
     Stops early and logs a warning if the free-tier monthly credit limit is reached.
     """
-    import logging
-    log = logging.getLogger(__name__)
     count = 0
     for ep in episodes:
         if not ep or not ep.get("data"):
