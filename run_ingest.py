@@ -115,6 +115,8 @@ def ingest_user_profiles(client: Zep) -> int:
 
 def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
     log.info("── Delegate votes: vote.makerdao.com ──")
+    address_to_name = fetch_delegates()
+    log.info(f"   Loaded {len(address_to_name)} delegate address mappings")
     log.info(f"   Processing {len(polls)} polls for per-delegate vote records")
 
     episodes = []
@@ -123,7 +125,7 @@ def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
         poll_title = poll.get("title", "")
         if not poll_id:
             continue
-        voters = fetch_poll_voters(poll_id=poll_id, poll_title=poll_title)
+        voters = fetch_poll_voters(poll_id=poll_id, poll_title=poll_title, address_to_name=address_to_name)
         for record in voters:
             episodes.append(delegate_vote_to_episode(record))
         time.sleep(0.2)

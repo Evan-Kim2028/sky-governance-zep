@@ -206,7 +206,11 @@ def fetch_delegates() -> dict[str, str]:
         return {}
 
 
-def fetch_poll_voters(poll_id: int, poll_title: str) -> list[dict]:
+def fetch_poll_voters(
+    poll_id: int,
+    poll_title: str,
+    address_to_name: dict[str, str] | None = None,
+) -> list[dict]:
     """Return per-delegate vote records for a poll.
 
     Each record: {delegate_name, voter_address, option_name, mkr_support,
@@ -214,8 +218,14 @@ def fetch_poll_voters(poll_id: int, poll_title: str) -> list[dict]:
     Resolves voter addresses to delegate names using fetch_delegates().
     Addresses not in the delegate list are shown as truncated address.
     Returns empty list on tally fetch error.
+
+    address_to_name: optional pre-fetched delegate map (address → name).
+                     If None, fetches fresh via fetch_delegates().
+                     Pass a pre-fetched map when processing many polls
+                     to avoid 300 redundant API calls per run.
     """
-    address_to_name = fetch_delegates()
+    if address_to_name is None:
+        address_to_name = fetch_delegates()
     try:
         tally = _get(f"{VOTE_BASE}/api/polling/tally/{poll_id}")
     except Exception:
