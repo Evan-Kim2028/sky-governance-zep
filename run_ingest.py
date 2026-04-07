@@ -41,13 +41,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
-MAX_CATEGORIES   = 5      # per forum
-MAX_PAGES        = 5      # 5 pages × 30 topics = up to 150 topics per category
-MAX_POLLS        = 150    # ~5 pages of polls — covers 2+ years of governance history
-MAX_EXECUTIVES   = 50     # all recent executive votes
-LOOKBACK_DAYS    = 730    # 2 years — captures Endgame plan, MIP-65, core unit era
+MAX_CATEGORIES   = 10     # all governance-relevant categories
+MAX_PAGES        = 10     # 10 pages × 30 topics = up to 300 topics per category
+MAX_POLLS        = 300    # ~3 months of weekly polls
+MAX_EXECUTIVES   = 100    # all recent executive votes
+LOOKBACK_DAYS    = 90     # 3 months — focused, recent, high-signal data
 
-# Total budget: ~150 forum + 150 polls + 50 execs = ~350 credits out of 1000/month
+# Flex plan: 20,000 credits/month. Estimated budget: ~500-800 episodes well within limit.
 
 
 def ingest_forum(client: Zep, forum_base: str) -> int:
