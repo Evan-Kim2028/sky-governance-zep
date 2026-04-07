@@ -39,7 +39,9 @@ def topic_to_episode(topic: dict, posts: list[str], category_name: str) -> dict:
     Each post is HTML-stripped and capped at 300 chars. Total episode capped at 4000 chars.
     """
     title = topic.get("title", "Untitled")
-    tags = ", ".join(topic.get("tags") or []) or "none"
+    raw_tags = topic.get("tags") or []
+    tag_names = [t["name"] if isinstance(t, dict) else str(t) for t in raw_tags]
+    tags = ", ".join(tag_names) or "none"
     created = topic.get("created_at", "")
     posts_count = topic.get("posts_count", 0)
     like_count = topic.get("like_count", 0)

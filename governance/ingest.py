@@ -23,18 +23,29 @@ def ensure_user(client: Zep, user_id: str = ZEP_USER_ID) -> None:
 
 
 def ingest_episodes(client: Zep, episodes: list[dict | None], user_id: str = ZEP_USER_ID) -> int:
-    """Send valid episodes to ZEP graph. Returns count of episodes ingested."""
+    """Send valid episodes to ZEP graph. Returns count of episodes ingested.
+
+    Stops early and logs a warning if the free-tier monthly credit limit is reached.
+    """
+    import logging
+    log = logging.getLogger(__name__)
     count = 0
     for ep in episodes:
         if not ep or not ep.get("data"):
             continue
-        client.graph.add(
-            user_id=user_id,
-            data=ep["data"],
-            type=ep.get("type", "text"),
-            source_description=ep.get("source_description", "governance"),
-            created_at=ep.get("created_at"),
-        )
+        try:
+            client.graph.add(
+                user_id=user_id,
+                data=ep["data"],
+                type=ep.get("type", "text"),
+                source_description=ep.get("source_description", "governance"),
+                created_at=ep.get("created_at"),
+            )
+        except ApiError as e:
+            if e.status_code == 403 and "usage limit" in str(e.body or "").lower():
+                log.warning("Monthly credit limit reached — stopping ingest. Upgrade plan or wait for reset.")
+                break
+            raise
         count += 1
     return count
 

@@ -6,17 +6,22 @@ import requests
 
 VOTE_BASE  = "https://vote.makerdao.com"
 HEADERS    = {"Accept": "application/json", "User-Agent": "ZEP-Governance-Explorer/1.0"}
-GOV_KEYWORDS = {"governance", "mips", "risk", "signal", "protocol", "collateral", "executive"}
+GOV_KEYWORDS = {
+    # Sky Endgame era (current): forum.skyeco.com categories post-2024 rebrand
+    "sky", "spark", "grove", "keel", "obex", "pattern", "alignment", "proposal",
+    # MakerDAO legacy era: kept for any historical forum data that may surface
+    "governance", "mips", "risk", "signal", "collateral", "executive",
+}
 
 PAGE_SIZE  = 30   # Discourse default topics-per-page
 
-MAKER_FORUM_BASE = "https://forum.makerdao.com"   # historical: 2019–2024 pre-rebrand
-SKY_FORUM_BASE   = "https://forum.skyeco.com"     # current:    2024– post-rebrand
+MAKER_FORUM_BASE = "https://forum.makerdao.com"   # historical alias — now mirrors skyeco
+SKY_FORUM_BASE   = "https://forum.skyeco.com"     # current canonical forum
 FORUM_BASE       = SKY_FORUM_BASE                 # default for single-forum calls
 
-# run_ingest.py iterates both forums explicitly — no dedup needed since
-# post-rebrand topics won't appear on the old forum and vice-versa.
-BOTH_FORUMS = [MAKER_FORUM_BASE, SKY_FORUM_BASE]
+# Post-rebrand, forum.makerdao.com redirects to the same content as forum.skyeco.com.
+# Fetching both would duplicate episodes. Use only the canonical Sky forum.
+BOTH_FORUMS = [SKY_FORUM_BASE]
 
 
 def _get(url: str, params: dict | None = None) -> dict | list:
