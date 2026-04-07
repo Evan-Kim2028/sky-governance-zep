@@ -147,3 +147,38 @@ def fetch_executives(limit: int = 50) -> list[dict]:
     if isinstance(data, list):
         return data[:limit]
     return []
+
+
+def fetch_top_posters(
+    forum_base: str = FORUM_BASE,
+    limit: int = 50,
+    period: str = "monthly",
+) -> list[dict]:
+    """Return top-posting community members from the Discourse directory.
+
+    Each item has: {id, likes_received, post_count, topic_count,
+                    user: {username, title, trust_level}}
+    Returns empty list on error.
+    """
+    try:
+        data = _get(
+            f"{forum_base}/directory_items.json",
+            params={"order": "post_count", "period": period, "page": 0},
+        )
+        items = data.get("directory_items", [])
+        return items[:limit]
+    except Exception:
+        return []
+
+
+def fetch_user_profile(username: str, forum_base: str = FORUM_BASE) -> dict | None:
+    """Return the Discourse user profile dict for a username, or None on error.
+
+    Keys of interest: username, title, trust_level, badge_count, bio_raw,
+                      created_at, last_posted_at, groups (list of {name}).
+    """
+    try:
+        data = _get(f"{forum_base}/u/{username}.json")
+        return data.get("user")
+    except Exception:
+        return None

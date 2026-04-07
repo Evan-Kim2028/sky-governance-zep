@@ -110,6 +110,49 @@ def post_to_episode(
     }
 
 
+def user_profile_to_episode(profile: dict, stats: dict) -> dict:
+    """Convert a Discourse user profile + directory stats into a ZEP episode.
+
+    This gives ZEP person-entity context: role, group membership,
+    activity level, and bio — so it can answer who the key participants
+    are and what their standing in the DAO is.
+
+    profile: dict from fetch_user_profile (username, title, trust_level,
+             badge_count, bio_raw, created_at, last_posted_at, groups)
+    stats:   dict from fetch_top_posters item (post_count, likes_received)
+    """
+    username = profile.get("username", "unknown")
+    title = profile.get("title") or "community member"
+    trust_level = profile.get("trust_level", 0)
+    badge_count = profile.get("badge_count", 0)
+    bio = strip_html(profile.get("bio_raw") or "")[:500]
+    created_at = profile.get("created_at", "")
+    last_posted = profile.get("last_posted_at", "")
+    groups = [g.get("name", "") for g in (profile.get("groups") or [])
+              if not g.get("name", "").startswith("trust_level")]
+
+    post_count = stats.get("post_count", 0)
+    likes_received = stats.get("likes_received", 0)
+
+    text = (
+        f"Sky/MakerDAO governance forum participant: @{username}. "
+        f"Role: {title}. "
+        f"Groups: {', '.join(groups) or 'none'}. "
+        f"Trust level: {trust_level}. Badges: {badge_count}. "
+        f"Activity: {post_count} posts, {likes_received} likes received. "
+        f"Active since: {created_at}. Last post: {last_posted}. "
+    )
+    if bio:
+        text += f"Bio: {bio}"
+
+    return {
+        "data": text[:2500],
+        "type": "text",
+        "created_at": created_at,
+        "source_description": f"user-{username}",
+    }
+
+
 def poll_to_episode(poll: dict, tally: dict | None) -> dict | None:
     """Convert a vote.makerdao.com poll + optional tally into a ZEP episode dict."""
     title = poll.get("title", "")

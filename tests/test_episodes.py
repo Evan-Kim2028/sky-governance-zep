@@ -6,6 +6,7 @@ from governance.episodes import (
     poll_to_episode,
     executive_to_episode,
     post_to_episode,
+    user_profile_to_episode,
 )
 
 
@@ -278,3 +279,60 @@ def test_post_to_episode_no_reply_context_when_none():
     ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
     assert "replying" not in ep["data"].lower()
     assert "reply to post" not in ep["data"].lower()
+
+
+# ── user_profile_to_episode ───────────────────────────────────────────────────
+
+def test_user_profile_to_episode_basic_structure():
+    profile = {
+        "username": "hexonaut",
+        "title": "Aligned Delegate (AD)",
+        "trust_level": 4,
+        "badge_count": 22,
+        "bio_raw": "Working on Sky protocol governance and risk.",
+        "created_at": "2020-03-15T00:00:00.000Z",
+        "last_posted_at": "2026-03-01T12:00:00.000Z",
+        "groups": [{"name": "Aligned_Delegates"}],
+    }
+    stats = {"post_count": 120, "likes_received": 50}
+    ep = user_profile_to_episode(profile, stats)
+    assert ep["type"] == "text"
+    assert ep["source_description"] == "user-hexonaut"
+    assert ep["created_at"] == "2020-03-15T00:00:00.000Z"
+    assert "@hexonaut" in ep["data"]
+    assert "Aligned Delegate" in ep["data"]
+    assert "governance" in ep["data"].lower()
+
+
+def test_user_profile_to_episode_includes_group_membership():
+    profile = {
+        "username": "rune",
+        "title": "Facilitator",
+        "trust_level": 4,
+        "badge_count": 10,
+        "bio_raw": "",
+        "created_at": "2019-05-01T00:00:00.000Z",
+        "last_posted_at": "2026-02-01T00:00:00.000Z",
+        "groups": [{"name": "Aligned_Delegates"}, {"name": "trust_level_4"}],
+    }
+    stats = {"post_count": 80, "likes_received": 30}
+    ep = user_profile_to_episode(profile, stats)
+    assert "Aligned_Delegates" in ep["data"]
+    assert "trust_level_4" not in ep["data"]  # trust_level groups filtered out
+
+
+def test_user_profile_to_episode_handles_missing_bio():
+    profile = {
+        "username": "newuser",
+        "title": None,
+        "trust_level": 1,
+        "badge_count": 2,
+        "bio_raw": None,
+        "created_at": "2026-01-01T00:00:00.000Z",
+        "last_posted_at": "2026-01-10T00:00:00.000Z",
+        "groups": [],
+    }
+    stats = {"post_count": 5, "likes_received": 1}
+    ep = user_profile_to_episode(profile, stats)
+    assert ep is not None
+    assert "@newuser" in ep["data"]

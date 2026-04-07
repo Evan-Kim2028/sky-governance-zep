@@ -8,6 +8,8 @@ from governance.fetchers import (
     fetch_polls_paginated,
     fetch_poll_tally,
     fetch_executives,
+    fetch_top_posters,
+    fetch_user_profile,
 )
 
 
@@ -280,3 +282,70 @@ def test_fetch_executives_respects_limit():
     with patch("governance.fetchers.requests.get", return_value=mock_response(EXECUTIVES_PAYLOAD)):
         execs = fetch_executives(limit=1)
     assert len(execs) == 1
+
+
+# ── fetch_top_posters ─────────────────────────────────────────────────────────
+
+DIRECTORY_PAYLOAD = {
+    "directory_items": [
+        {
+            "id": 1, "likes_received": 50, "post_count": 120, "topic_count": 15,
+            "user": {"username": "hexonaut", "title": "Aligned Delegate (AD)", "trust_level": 4},
+        },
+        {
+            "id": 2, "likes_received": 30, "post_count": 80, "topic_count": 8,
+            "user": {"username": "rune", "title": "Facilitator", "trust_level": 4},
+        },
+        {
+            "id": 3, "likes_received": 5, "post_count": 10, "topic_count": 2,
+            "user": {"username": "lurker", "title": None, "trust_level": 1},
+        },
+    ]
+}
+
+PROFILE_PAYLOAD = {
+    "user": {
+        "username": "hexonaut",
+        "title": "Aligned Delegate (AD)",
+        "trust_level": 4,
+        "badge_count": 22,
+        "bio_raw": "Working on Sky protocol governance and risk.",
+        "created_at": "2020-03-15T00:00:00.000Z",
+        "last_posted_at": "2026-03-01T12:00:00.000Z",
+        "groups": [{"name": "Aligned_Delegates"}, {"name": "trust_level_4"}],
+    }
+}
+
+
+def test_fetch_top_posters_returns_usernames():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(DIRECTORY_PAYLOAD)):
+        posters = fetch_top_posters(limit=3)
+    usernames = [p["user"]["username"] for p in posters]
+    assert "hexonaut" in usernames
+    assert "rune" in usernames
+
+
+def test_fetch_top_posters_respects_limit():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(DIRECTORY_PAYLOAD)):
+        posters = fetch_top_posters(limit=2)
+    assert len(posters) <= 2
+
+
+def test_fetch_top_posters_returns_empty_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("network")):
+        posters = fetch_top_posters(limit=10)
+    assert posters == []
+
+
+def test_fetch_user_profile_returns_user_dict():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(PROFILE_PAYLOAD)):
+        profile = fetch_user_profile("hexonaut")
+    assert profile["username"] == "hexonaut"
+    assert profile["title"] == "Aligned Delegate (AD)"
+    assert profile["trust_level"] == 4
+
+
+def test_fetch_user_profile_returns_none_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("404")):
+        profile = fetch_user_profile("nobody")
+    assert profile is None
