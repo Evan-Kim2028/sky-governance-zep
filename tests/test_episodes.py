@@ -336,3 +336,20 @@ def test_user_profile_to_episode_handles_missing_bio():
     ep = user_profile_to_episode(profile, stats)
     assert ep is not None
     assert "@newuser" in ep["data"]
+    assert "Bio:" not in ep["data"]
+
+
+def test_user_profile_to_episode_title_fallback():
+    profile = {
+        "username": "notitled",
+        "title": None,
+        "trust_level": 2,
+        "badge_count": 3,
+        "bio_raw": None,
+        "created_at": "2025-06-01T00:00:00.000Z",
+        "last_posted_at": "2026-01-01T00:00:00.000Z",
+        "groups": [],
+    }
+    stats = {"post_count": 20, "likes_received": 5}
+    ep = user_profile_to_episode(profile, stats)
+    assert "community member" in ep["data"]

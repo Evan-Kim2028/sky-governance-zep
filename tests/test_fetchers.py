@@ -1,3 +1,4 @@
+import unittest.mock
 from datetime import datetime, timezone, timedelta
 from unittest.mock import patch, MagicMock, call
 import pytest
@@ -318,11 +319,17 @@ PROFILE_PAYLOAD = {
 
 
 def test_fetch_top_posters_returns_usernames():
-    with patch("governance.fetchers.requests.get", return_value=mock_response(DIRECTORY_PAYLOAD)):
+    with patch("governance.fetchers.requests.get", return_value=mock_response(DIRECTORY_PAYLOAD)) as mock_get:
         posters = fetch_top_posters(limit=3)
     usernames = [p["user"]["username"] for p in posters]
     assert "hexonaut" in usernames
     assert "rune" in usernames
+    mock_get.assert_called_once_with(
+        "https://forum.skyeco.com/directory_items.json",
+        headers=unittest.mock.ANY,
+        params={"order": "post_count", "period": "monthly", "page": 0},
+        timeout=20,
+    )
 
 
 def test_fetch_top_posters_respects_limit():
@@ -337,12 +344,25 @@ def test_fetch_top_posters_returns_empty_on_error():
     assert posters == []
 
 
+def test_fetch_top_posters_uses_period_param():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(DIRECTORY_PAYLOAD)) as mock_get:
+        fetch_top_posters(period="weekly")
+    _, kwargs = mock_get.call_args
+    assert kwargs["params"]["period"] == "weekly"
+
+
 def test_fetch_user_profile_returns_user_dict():
-    with patch("governance.fetchers.requests.get", return_value=mock_response(PROFILE_PAYLOAD)):
+    with patch("governance.fetchers.requests.get", return_value=mock_response(PROFILE_PAYLOAD)) as mock_get:
         profile = fetch_user_profile("hexonaut")
     assert profile["username"] == "hexonaut"
     assert profile["title"] == "Aligned Delegate (AD)"
     assert profile["trust_level"] == 4
+    mock_get.assert_called_once_with(
+        "https://forum.skyeco.com/u/hexonaut.json",
+        headers=unittest.mock.ANY,
+        params=None,
+        timeout=20,
+    )
 
 
 def test_fetch_user_profile_returns_none_on_error():
