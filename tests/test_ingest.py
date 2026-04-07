@@ -85,6 +85,44 @@ def test_ingest_episodes_returns_zero_for_all_invalid():
     client.graph.add.assert_not_called()
 
 
+def test_ingest_episodes_skips_on_400_bad_request():
+    """400 errors (bad episode data) are skipped; ingest continues and counts only successes."""
+    episodes = [
+        {"data": "good episode 1", "type": "text", "source_description": "ep-1"},
+        {"data": "bad episode", "type": "text", "source_description": "ep-bad"},
+        {"data": "good episode 2", "type": "text", "source_description": "ep-2"},
+    ]
+
+    bad_request = ApiError(status_code=400, headers={}, body={"message": "invalid json"})
+
+    client = MagicMock()
+    client.graph.add.side_effect = [None, bad_request, None]
+
+    count = ingest_episodes(client, episodes)
+    assert count == 2  # bad episode skipped, both good ones counted
+    assert client.graph.add.call_count == 3  # all three attempted
+
+
+def test_ingest_episodes_stops_on_403_usage_limit():
+    """403 with 'usage limit' in body stops ingestion and returns count so far."""
+    episodes = [
+        {"data": "ep 1", "type": "text", "source_description": "ep-1"},
+        {"data": "ep 2", "type": "text", "source_description": "ep-2"},
+        {"data": "ep 3", "type": "text", "source_description": "ep-3"},
+    ]
+
+    credit_limit_error = ApiError(
+        status_code=403, headers={}, body={"message": "Account is over the episode usage limit"}
+    )
+
+    client = MagicMock()
+    client.graph.add.side_effect = [None, credit_limit_error, None]
+
+    count = ingest_episodes(client, episodes)
+    assert count == 1  # only ep-1 succeeded before the limit hit
+    assert client.graph.add.call_count == 2  # stopped after the 403, ep-3 never attempted
+
+
 # ── estimate_credits ──────────────────────────────────────────────────────────
 
 def test_estimate_credits_counts_valid():
