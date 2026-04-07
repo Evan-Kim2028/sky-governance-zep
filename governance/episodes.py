@@ -73,6 +73,43 @@ def topic_to_episode(topic: dict, posts: list[str], category_name: str) -> dict:
     }
 
 
+def post_to_episode(
+    post: dict,
+    topic_id: int,
+    topic_title: str,
+    category: str,
+) -> dict:
+    """Convert a single Discourse post dict into a ZEP episode attributed to its author.
+
+    Each post becomes one episode so ZEP can extract per-person belief edges:
+    e.g. '@hexonaut supported lowering the USDS rate [valid 2026-01-15]'.
+
+    post dict keys used: id, username, created_at, cooked, post_number,
+                         like_count, reply_to_post_number
+    """
+    username = post.get("username", "unknown")
+    post_id = post.get("id", 0)
+    created_at = post.get("created_at", "")
+    like_count = post.get("like_count", 0)
+    reply_to = post.get("reply_to_post_number")
+    content = strip_html(post.get("cooked") or "")[:1500]
+
+    reply_ctx = f" (replying to post #{reply_to})" if reply_to else ""
+    likes_ctx = f" [{like_count} likes]" if like_count else ""
+
+    text = (
+        f"Forum post by @{username} in '{topic_title}' ({category}){reply_ctx}{likes_ctx}: "
+        f"{content}"
+    )
+
+    return {
+        "data": text[:2500],
+        "type": "text",
+        "created_at": created_at,
+        "source_description": f"post-{topic_id}-{post_id}",
+    }
+
+
 def poll_to_episode(poll: dict, tally: dict | None) -> dict | None:
     """Convert a vote.makerdao.com poll + optional tally into a ZEP episode dict."""
     title = poll.get("title", "")

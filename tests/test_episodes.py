@@ -5,6 +5,7 @@ from governance.episodes import (
     topic_to_episode,
     poll_to_episode,
     executive_to_episode,
+    post_to_episode,
 )
 
 
@@ -184,3 +185,96 @@ def test_executive_to_episode_no_title_returns_none():
 
 def test_executive_to_episode_missing_title_returns_none():
     assert executive_to_episode({"key": "abc"}) is None
+
+
+def test_post_to_episode_basic_structure():
+    post = {
+        "id": 101,
+        "username": "hexonaut",
+        "created_at": "2026-01-15T14:23:00.000Z",
+        "cooked": "<p>I support lowering the USDS borrow rate to 8.5%.</p>",
+        "post_number": 3,
+        "like_count": 7,
+        "reply_to_post_number": None,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="USDS Rate Discussion", category="Sky Core")
+    assert ep["type"] == "text"
+    assert ep["created_at"] == "2026-01-15T14:23:00.000Z"
+    assert ep["source_description"] == "post-999-101"
+    assert "@hexonaut" in ep["data"]
+    assert "USDS Rate Discussion" in ep["data"]
+    assert "Sky Core" in ep["data"]
+    assert "8.5%" in ep["data"]
+
+
+def test_post_to_episode_strips_html():
+    post = {
+        "id": 102,
+        "username": "rune",
+        "created_at": "2026-01-15T15:00:00.000Z",
+        "cooked": "<p>This is <strong>bold</strong> text with <a href='#'>link</a>.</p>",
+        "post_number": 4,
+        "like_count": 0,
+        "reply_to_post_number": None,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert "<p>" not in ep["data"]
+    assert "<strong>" not in ep["data"]
+    assert "bold" in ep["data"]
+
+
+def test_post_to_episode_includes_reply_context():
+    post = {
+        "id": 103,
+        "username": "alice",
+        "created_at": "2026-01-16T09:00:00.000Z",
+        "cooked": "<p>Agreed with your point.</p>",
+        "post_number": 5,
+        "like_count": 2,
+        "reply_to_post_number": 3,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert "reply to post #3" in ep["data"].lower() or "replying" in ep["data"].lower()
+
+
+def test_post_to_episode_caps_content_at_2500_chars():
+    post = {
+        "id": 104,
+        "username": "longposter",
+        "created_at": "2026-01-16T10:00:00.000Z",
+        "cooked": "<p>" + ("x" * 5000) + "</p>",
+        "post_number": 6,
+        "like_count": 0,
+        "reply_to_post_number": None,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert len(ep["data"]) <= 2500
+
+
+def test_post_to_episode_includes_like_count_when_nonzero():
+    post = {
+        "id": 105,
+        "username": "popular",
+        "created_at": "2026-01-17T08:00:00.000Z",
+        "cooked": "<p>Liked opinion.</p>",
+        "post_number": 7,
+        "like_count": 15,
+        "reply_to_post_number": None,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert "15" in ep["data"]
+
+
+def test_post_to_episode_no_reply_context_when_none():
+    post = {
+        "id": 106,
+        "username": "solo",
+        "created_at": "2026-01-17T09:00:00.000Z",
+        "cooked": "<p>Standalone post.</p>",
+        "post_number": 1,
+        "like_count": 0,
+        "reply_to_post_number": None,
+    }
+    ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert "replying" not in ep["data"].lower()
+    assert "reply to post" not in ep["data"].lower()
