@@ -2,19 +2,15 @@
 """
 Governance ingestion pipeline — MakerDAO + Sky → ZEP Cloud.
 
-Fetches from BOTH forums:
-  - forum.makerdao.com  (historical: 2019-2024, pre-rebrand Maker governance)
-  - forum.skyeco.com    (current: 2024+, post-rebrand Sky governance)
-
-These are the same community/protocol lineage. The old forum holds all the
-historically important decisions (Black Thursday, MIP-21, MIP-65, Endgame).
-The new forum has the rebrand discussions and ongoing Sky protocol governance.
+Fetches from forum.skyeco.com (canonical post-rebrand forum) and vote.makerdao.com.
+Ingests person-level episodes: one per post (author attributed), one per user profile,
+one per delegate vote, plus poll and executive summaries.
 
 Usage:
   cp .env.example .env        # fill in ZEP_API_KEY
   python run_ingest.py
 
-Free tier budget: ~350 credits per full run (1000/month limit).
+Flex plan budget: ~3,700 episodes / 20,000 monthly credits.
 """
 
 import logging
@@ -25,15 +21,26 @@ from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 from zep_cloud import Zep
 
-from governance.episodes import executive_to_episode, poll_to_episode, topic_to_episode
+from governance.episodes import (
+    delegate_vote_to_episode,
+    executive_to_episode,
+    poll_to_episode,
+    post_to_episode,
+    user_profile_to_episode,
+)
 from governance.fetchers import (
     BOTH_FORUMS,
+    SKY_FORUM_BASE,
+    fetch_all_topic_post_records,
+    fetch_all_topics_since,
+    fetch_delegates,
     fetch_executives,
     fetch_governance_categories,
-    fetch_all_topics_since,
-    fetch_topic_posts,
+    fetch_poll_voters,
     fetch_polls_paginated,
     fetch_poll_tally,
+    fetch_top_posters,
+    fetch_user_profile,
 )
 from governance.ingest import ZEP_USER_ID, ensure_user, estimate_credits, ingest_episodes
 
@@ -45,9 +52,12 @@ MAX_CATEGORIES   = 10     # all governance-relevant categories
 MAX_PAGES        = 10     # 10 pages × 30 topics = up to 300 topics per category
 MAX_POLLS        = 300    # ~3 months of weekly polls
 MAX_EXECUTIVES   = 100    # all recent executive votes
+MAX_TOP_POSTERS  = 50     # top monthly posters — person-entity context for ZEP
 LOOKBACK_DAYS    = 90     # 3 months — focused, recent, high-signal data
 
-# Flex plan: 20,000 credits/month. Estimated budget: ~500-800 episodes well within limit.
+# Flex plan: 20,000 credits/month.
+# Estimated budget: ~950 post episodes + 50 profiles + ~2,400 delegate votes
+#                   + 300 polls + 5 executives = ~3,700 credits
 
 
 def ingest_forum(client: Zep, forum_base: str) -> int:
@@ -64,13 +74,62 @@ def ingest_forum(client: Zep, forum_base: str) -> int:
             cat["id"], cat["slug"], since=since,
             max_pages=MAX_PAGES, forum_base=forum_base,
         )
-        log.info(f"   [{cat['name']}] {len(topics)} topics within {LOOKBACK_DAYS}d window")
+        log.info(f"   [{cat['name']}] {len(topics)} topics → fetching all posts per topic")
         for topic in topics:
-            posts_html = fetch_topic_posts(topic["id"], forum_base=forum_base)
-            episodes.append(topic_to_episode(topic, posts_html, cat["name"]))
-            time.sleep(0.4)  # respect Discourse rate limit (~150 req/min max)
+            post_records = fetch_all_topic_post_records(topic["id"], forum_base=forum_base)
+            for post in post_records:
+                episodes.append(post_to_episode(
+                    post,
+                    topic_id=topic["id"],
+                    topic_title=topic.get("title", "Untitled"),
+                    category=cat["name"],
+                ))
+            time.sleep(0.4)
 
-    log.info(f"   {label} episodes: {estimate_credits(episodes)} credits")
+    log.info(f"   {label} post episodes: {estimate_credits(episodes)} credits")
+    return ingest_episodes(client, episodes)
+
+
+def ingest_user_profiles(client: Zep) -> int:
+    log.info("── User profiles: forum.skyeco.com ──")
+    top_items = fetch_top_posters(forum_base=SKY_FORUM_BASE, limit=MAX_TOP_POSTERS, period="monthly")
+    log.info(f"   Fetched {len(top_items)} top posters")
+
+    episodes = []
+    for item in top_items:
+        username = item.get("user", {}).get("username")
+        if not username:
+            continue
+        profile = fetch_user_profile(username, forum_base=SKY_FORUM_BASE)
+        if profile:
+            stats = {
+                "post_count": item.get("post_count", 0),
+                "likes_received": item.get("likes_received", 0),
+            }
+            episodes.append(user_profile_to_episode(profile, stats))
+        time.sleep(0.5)
+
+    log.info(f"   User profile episodes: {estimate_credits(episodes)} credits")
+    return ingest_episodes(client, episodes)
+
+
+def ingest_delegate_votes(client: Zep) -> int:
+    log.info("── Delegate votes: vote.makerdao.com ──")
+    polls = fetch_polls_paginated(max_polls=MAX_POLLS)
+    log.info(f"   Processing {len(polls)} polls for per-delegate vote records")
+
+    episodes = []
+    for poll in polls:
+        poll_id = poll.get("pollId") or poll.get("id")
+        poll_title = poll.get("title", "")
+        if not poll_id:
+            continue
+        voters = fetch_poll_voters(poll_id=poll_id, poll_title=poll_title)
+        for record in voters:
+            episodes.append(delegate_vote_to_episode(record))
+        time.sleep(0.2)
+
+    log.info(f"   Delegate vote episodes: {estimate_credits(episodes)} credits")
     return ingest_episodes(client, episodes)
 
 
@@ -108,14 +167,15 @@ def main() -> None:
     log.info(f"ZEP user ready: {ZEP_USER_ID}")
 
     total = 0
-    # Both forums: historical Maker (2019-2024) + current Sky (2024+)
     for forum_base in BOTH_FORUMS:
         total += ingest_forum(client, forum_base)
+    total += ingest_user_profiles(client)
+    total += ingest_delegate_votes(client)
     total += ingest_polls(client)
     total += ingest_executives(client)
 
-    log.info(f"── Done: {total} episodes ingested ({total}/1000 monthly credits used) ──")
-    log.info("Graph processes asynchronously on free tier. Wait 60-90s then run query.py.")
+    log.info(f"── Done: {total} episodes ingested ({total}/20,000 Flex monthly credits) ──")
+    log.info("Graph processes asynchronously. Wait 90s then run query.py.")
 
 
 if __name__ == "__main__":
