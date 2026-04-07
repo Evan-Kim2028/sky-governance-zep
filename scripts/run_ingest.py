@@ -8,18 +8,19 @@ one per delegate vote, plus poll and executive summaries.
 
 Usage:
   cp .env.example .env        # fill in ZEP_API_KEY
-  python run_ingest.py
+  python scripts/run_ingest.py
 
-Flex plan budget: ~3,700 episodes / 20,000 monthly credits.
+Flex plan budget: ~4,000 episodes / 20,000 monthly credits.
 """
 
 import logging
 import os
 import time
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 
 from dotenv import load_dotenv
-from zep_cloud import Zep
+from zep_cloud.client import Zep
 
 from governance.episodes import (
     delegate_vote_to_episode,
@@ -29,10 +30,11 @@ from governance.episodes import (
     user_profile_to_episode,
 )
 from governance.fetchers import (
-    BOTH_FORUMS,
+    INGEST_FORUMS,
     SKY_FORUM_BASE,
     fetch_all_topic_post_records,
     fetch_all_topics_since,
+    fetch_category_by_name,
     fetch_delegates,
     fetch_executives,
     fetch_governance_categories,
@@ -41,10 +43,11 @@ from governance.fetchers import (
     fetch_poll_tally,
     fetch_top_posters,
     fetch_user_profile,
+    is_gov_relevant_title,
 )
 from governance.ingest import ZEP_USER_ID, ensure_user, estimate_credits, ingest_episodes
 
-load_dotenv()
+load_dotenv(Path(__file__).parent.parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
 log = logging.getLogger(__name__)
 
@@ -56,8 +59,8 @@ MAX_TOP_POSTERS  = 50     # top monthly posters — person-entity context for ZE
 LOOKBACK_DAYS    = 90     # 3 months — focused, recent, high-signal data
 
 # Flex plan: 20,000 credits/month.
-# Estimated budget: ~950 post episodes + 50 profiles + ~2,400 delegate votes
-#                   + 300 polls + 5 executives = ~3,700 credits
+# Estimated budget: ~950 post episodes + ~200 general-discussion + 50 profiles
+#                   + ~2,400 delegate votes + 300 polls + 5 executives = ~3,900 credits
 
 
 def ingest_forum(client: Zep, forum_base: str) -> int:
@@ -84,9 +87,51 @@ def ingest_forum(client: Zep, forum_base: str) -> int:
                     topic_title=topic.get("title", "Untitled"),
                     category=cat["name"],
                 ))
-            time.sleep(0.4)
+            time.sleep(0.4)  # respect Discourse rate limit between topic fetches
 
     log.info(f"   {label} post episodes: {estimate_credits(episodes)} credits")
+    return ingest_episodes(client, episodes)
+
+
+def ingest_general_discussion(client: Zep) -> int:
+    """Fetch General Discussion topics from the last LOOKBACK_DAYS and ingest
+    governance-relevant ones as per-post episodes.
+
+    Runs on every pipeline execution so new topics are picked up incrementally.
+    The one-time historical backfill (backfill_general_discussion.py) covers
+    older topics beyond this rolling window.
+    """
+    log.info("── General Discussion (governance-filtered): forum.skyeco.com ──")
+    since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
+
+    result = fetch_category_by_name("general", forum_base=SKY_FORUM_BASE)
+    if result is None:
+        log.warning("   General Discussion category not found — skipping")
+        return 0
+    cat_id, cat_slug = result
+
+    topics = fetch_all_topics_since(
+        cat_id, cat_slug, since=since,
+        max_pages=MAX_PAGES, forum_base=SKY_FORUM_BASE,
+    )
+    gov_topics = [t for t in topics if is_gov_relevant_title(t.get("title", ""))]
+    log.info(f"   {len(topics)} topics in window → {len(gov_topics)} governance-relevant")
+
+    episodes = []
+    for topic in gov_topics:
+        post_records = fetch_all_topic_post_records(topic["id"], forum_base=SKY_FORUM_BASE)
+        for post in post_records:
+            ep = post_to_episode(
+                post,
+                topic_id=topic["id"],
+                topic_title=topic.get("title", "Untitled"),
+                category="General Discussion",
+            )
+            if ep:
+                episodes.append(ep)
+        time.sleep(0.4)  # respect Discourse rate limit between topic fetches
+
+    log.info(f"   General Discussion episodes: {estimate_credits(episodes)} credits")
     return ingest_episodes(client, episodes)
 
 
@@ -107,7 +152,7 @@ def ingest_user_profiles(client: Zep) -> int:
                 "likes_received": item.get("likes_received", 0),
             }
             episodes.append(user_profile_to_episode(profile, stats))
-        time.sleep(0.5)
+        time.sleep(0.5)  # respect Discourse rate limit between profile fetches
 
     log.info(f"   User profile episodes: {estimate_credits(episodes)} credits")
     return ingest_episodes(client, episodes)
@@ -128,7 +173,7 @@ def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
         voters = fetch_poll_voters(poll_id=poll_id, poll_title=poll_title, address_to_name=address_to_name)
         for record in voters:
             episodes.append(delegate_vote_to_episode(record))
-        time.sleep(0.2)
+        time.sleep(0.2)  # respect vote.makerdao.com rate limit between polls
 
     log.info(f"   Delegate vote episodes: {estimate_credits(episodes)} credits")
     return ingest_episodes(client, episodes)
@@ -167,8 +212,9 @@ def main() -> None:
     log.info(f"ZEP user ready: {ZEP_USER_ID}")
 
     total = 0
-    for forum_base in BOTH_FORUMS:
+    for forum_base in INGEST_FORUMS:
         total += ingest_forum(client, forum_base)
+    total += ingest_general_discussion(client)
     total += ingest_user_profiles(client)
     polls = fetch_polls_paginated(max_polls=MAX_POLLS)
     log.info(f"Fetched {len(polls)} polls (shared across delegate votes and poll summaries)")
@@ -177,7 +223,7 @@ def main() -> None:
     total += ingest_executives(client)
 
     log.info(f"── Done: {total} episodes ingested ({total}/20,000 Flex monthly credits) ──")
-    log.info("Graph processes asynchronously. Wait 90s then run query.py.")
+    log.info("Graph processes asynchronously. Wait 90s then run scripts/query.py.")
 
 
 if __name__ == "__main__":

@@ -14,15 +14,13 @@ GOV_KEYWORDS = {
 }
 
 PAGE_SIZE  = 30   # Discourse default topics-per-page
-BATCH_SIZE = 20   # Max post IDs per /posts.json batch request
+BATCH_SIZE = 20   # Discourse /posts.json accepts max 20 post_ids[] per request
 
-MAKER_FORUM_BASE = "https://forum.makerdao.com"   # historical alias — now mirrors skyeco
 SKY_FORUM_BASE   = "https://forum.skyeco.com"     # current canonical forum
 FORUM_BASE       = SKY_FORUM_BASE                 # default for single-forum calls
 
-# Post-rebrand, forum.makerdao.com redirects to the same content as forum.skyeco.com.
-# Fetching both would duplicate episodes. Use only the canonical Sky forum.
-BOTH_FORUMS = [SKY_FORUM_BASE]
+# Canonical Sky forum only — forum.makerdao.com mirrors this post-rebrand
+INGEST_FORUMS = [SKY_FORUM_BASE]
 
 
 def _get(url: str, params: dict | None = None) -> dict | list:
@@ -42,6 +40,50 @@ def fetch_governance_categories(forum_base: str = FORUM_BASE) -> list[dict]:
             for kw in GOV_KEYWORDS
         )
     ]
+
+
+def fetch_category_by_name(
+    name_fragment: str,
+    forum_base: str = FORUM_BASE,
+) -> tuple[int, str] | None:
+    """Return (id, slug) for the first category whose name contains name_fragment.
+
+    Case-insensitive match. Returns None if no category matches.
+    """
+    data = _get(f"{forum_base}/categories.json")
+    cats = data.get("category_list", {}).get("categories", [])
+    fragment = name_fragment.lower()
+    for cat in cats:
+        if fragment in (cat.get("name") or "").lower():
+            return cat["id"], cat["slug"]
+    return None
+
+
+# Keywords used to identify governance-relevant General Discussion topics by title.
+# Shared by run_ingest.py (rolling window) and backfill_general_discussion.py (all-time).
+_GENDISC_GOV_KEYWORDS: frozenset[str] = frozenset({
+    "governance", "proposal", "vote", "voting", "delegate", "risk",
+    "collateral", "executive", "dai", "mkr", "sky", "usds",
+    "protocol", "token", "endgame", "atlas", "star", "spark",
+    "makerdao", "resolution", "framework", "tokenomics",
+    "ecosystem", "reform", "allocation", "rescue", "launch",
+})
+_GENDISC_NOISE_KEYWORDS: frozenset[str] = frozenset({
+    "blocked", "discord", "ban", "logo help", "not 1:1",
+})
+
+
+def is_gov_relevant_title(title: str) -> bool:
+    """Return True if a General Discussion topic title is governance-relevant.
+
+    Used to filter General Discussion (which mixes governance and support threads)
+    before ingestion. Applied to both the rolling pipeline window and the
+    one-time historical backfill.
+    """
+    t = title.lower()
+    if any(nk in t for nk in _GENDISC_NOISE_KEYWORDS):
+        return False
+    return any(gk in t for gk in _GENDISC_GOV_KEYWORDS)
 
 
 def fetch_all_topics_since(

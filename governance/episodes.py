@@ -4,8 +4,16 @@ from datetime import datetime, timezone
 
 
 def strip_html(html: str | None) -> str:
-    """Remove HTML tags and collapse whitespace. Caps at 2000 chars."""
+    """Remove HTML tags, decode common entities, and collapse whitespace. Caps at 2000 chars."""
     text = re.sub(r"<[^>]+>", " ", html or "")
+    # Decode common HTML entities present in Discourse posts
+    text = (text
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&quot;", '"')
+            .replace("&#39;", "'")
+            .replace("&nbsp;", " "))
     text = re.sub(r"\s+", " ", text).strip()
     return text[:2000]
 
@@ -35,8 +43,15 @@ def _parse_date(date_str: str | None) -> str | None:
 def topic_to_episode(topic: dict, posts: list[str], category_name: str) -> dict:
     """Convert a Discourse topic + list of post HTML strings into one ZEP episode.
 
-    All posts are bundled into a single episode (one ZEP credit regardless of post count).
-    Each post is HTML-stripped and capped at 300 chars. Total episode capped at 4000 chars.
+    ORIGINAL APPROACH (kept as reference): bundles all posts into one episode,
+    so ZEP extracts topic-level facts ("Topic X discussed governance") at the cost
+    of losing per-author attribution.
+
+    CURRENT APPROACH: use post_to_episode() instead — one episode per post so ZEP
+    can extract person-level temporal edges like "@hexonaut supported X [valid 2026-01-15]".
+
+    Credit cost: 1 credit regardless of post count (vs N credits for N post_to_episode calls).
+    Use this if you need to minimise credit spend at the cost of person-graph fidelity.
     """
     title = topic.get("title", "Untitled")
     raw_tags = topic.get("tags") or []
@@ -78,11 +93,14 @@ def post_to_episode(
     topic_id: int,
     topic_title: str,
     category: str,
-) -> dict:
+) -> dict | None:
     """Convert a single Discourse post dict into a ZEP episode attributed to its author.
 
     Each post becomes one episode so ZEP can extract per-person belief edges:
     e.g. '@hexonaut supported lowering the USDS rate [valid 2026-01-15]'.
+
+    Returns None for posts with < 80 chars of content (single-line reactions
+    like "+1", "agreed", "thanks" that yield no extractable graph edges).
 
     post dict keys used: id, username, created_at, cooked, post_number,
                          like_count, reply_to_post_number
@@ -93,6 +111,8 @@ def post_to_episode(
     like_count = post.get("like_count", 0)
     reply_to = post.get("reply_to_post_number")
     content = strip_html(post.get("cooked") or "")[:1500]
+    if len(content) < 80:
+        return None
 
     reply_ctx = f" (replying to post #{reply_to})" if reply_to else ""
     likes_ctx = f" [{like_count} likes]" if like_count else ""

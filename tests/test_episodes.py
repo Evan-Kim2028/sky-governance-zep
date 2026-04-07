@@ -194,7 +194,7 @@ def test_post_to_episode_basic_structure():
         "id": 101,
         "username": "hexonaut",
         "created_at": "2026-01-15T14:23:00.000Z",
-        "cooked": "<p>I support lowering the USDS borrow rate to 8.5%.</p>",
+        "cooked": "<p>I support lowering the USDS borrow rate to 8.5% — current levels are hampering protocol growth and USDS adoption compared to competing stablecoins.</p>",
         "post_number": 3,
         "like_count": 7,
         "reply_to_post_number": None,
@@ -214,7 +214,7 @@ def test_post_to_episode_strips_html():
         "id": 102,
         "username": "rune",
         "created_at": "2026-01-15T15:00:00.000Z",
-        "cooked": "<p>This is <strong>bold</strong> text with <a href='#'>link</a>.</p>",
+        "cooked": "<p>This is <strong>important</strong> governance context: the delegate should review the <a href='#'>full proposal</a> before casting their vote on USDS parameters.</p>",
         "post_number": 4,
         "like_count": 0,
         "reply_to_post_number": None,
@@ -222,7 +222,7 @@ def test_post_to_episode_strips_html():
     ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
     assert "<p>" not in ep["data"]
     assert "<strong>" not in ep["data"]
-    assert "bold" in ep["data"]
+    assert "important" in ep["data"]
 
 
 def test_post_to_episode_includes_reply_context():
@@ -230,12 +230,13 @@ def test_post_to_episode_includes_reply_context():
         "id": 103,
         "username": "alice",
         "created_at": "2026-01-16T09:00:00.000Z",
-        "cooked": "<p>Agreed with your point.</p>",
+        "cooked": "<p>I agree with your analysis of the USDS stability fee — the 8% target seems appropriate given current market conditions and protocol reserves.</p>",
         "post_number": 5,
         "like_count": 2,
         "reply_to_post_number": 3,
     }
     ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert ep is not None
     assert "reply to post #3" in ep["data"].lower() or "replying" in ep["data"].lower()
 
 
@@ -258,12 +259,13 @@ def test_post_to_episode_includes_like_count_when_nonzero():
         "id": 105,
         "username": "popular",
         "created_at": "2026-01-17T08:00:00.000Z",
-        "cooked": "<p>Liked opinion.</p>",
+        "cooked": "<p>The proposed collateral ratio of 150% for wBTC-A is well-calibrated given historical volatility and liquidity depth on major exchanges.</p>",
         "post_number": 7,
         "like_count": 15,
         "reply_to_post_number": None,
     }
     ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert ep is not None
     assert "15" in ep["data"]
 
 
@@ -272,14 +274,30 @@ def test_post_to_episode_no_reply_context_when_none():
         "id": 106,
         "username": "solo",
         "created_at": "2026-01-17T09:00:00.000Z",
-        "cooked": "<p>Standalone post.</p>",
+        "cooked": "<p>Opening this thread to discuss the proposed changes to the USDS stability fee parameters for the next governance cycle.</p>",
         "post_number": 1,
         "like_count": 0,
         "reply_to_post_number": None,
     }
     ep = post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core")
+    assert ep is not None
     assert "replying" not in ep["data"].lower()
     assert "reply to post" not in ep["data"].lower()
+
+
+def test_post_to_episode_returns_none_for_short_content():
+    """Posts under 80 chars ('+1', 'agreed', single-line reactions) return None."""
+    for short_content in ["<p>+1</p>", "<p>Agreed.</p>", "<p>Thanks for sharing this!</p>"]:
+        post = {
+            "id": 200,
+            "username": "reactor",
+            "created_at": "2026-01-18T10:00:00.000Z",
+            "cooked": short_content,
+            "post_number": 2,
+            "like_count": 0,
+            "reply_to_post_number": None,
+        }
+        assert post_to_episode(post, topic_id=999, topic_title="Test", category="Sky Core") is None
 
 
 # ── user_profile_to_episode ───────────────────────────────────────────────────

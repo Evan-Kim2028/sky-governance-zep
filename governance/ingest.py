@@ -1,7 +1,7 @@
 # governance/ingest.py
 import logging
 
-from zep_cloud import Zep
+from zep_cloud.client import Zep
 from zep_cloud.core.api_error import ApiError
 
 log = logging.getLogger(__name__)

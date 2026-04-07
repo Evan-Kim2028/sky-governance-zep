@@ -1,6 +1,9 @@
-# tests/conftest.py
+# conftest.py — pytest runs from the project root (zep-explore/).
+# The governance package is installed via: uv pip install -e ".[dev]"
+# or importable directly since tests run with project root on sys.path.
 import sys
-import os
+from pathlib import Path
 
-# Ensure `governance` package is importable when pytest runs from this directory
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Ensure project root is on sys.path so `governance` is importable
+# whether or not the package is installed in editable mode.
+sys.path.insert(0, str(Path(__file__).parent.parent))

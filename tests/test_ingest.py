@@ -93,7 +93,7 @@ def test_ingest_episodes_skips_on_400_bad_request():
         {"data": "good episode 2", "type": "text", "source_description": "ep-2"},
     ]
 
-    bad_request = ApiError(status_code=400, headers={}, body={"message": "invalid json"})
+    bad_request = ApiError(status_code=400, body={"message": "invalid json"})
 
     client = MagicMock()
     client.graph.add.side_effect = [None, bad_request, None]
@@ -112,7 +112,7 @@ def test_ingest_episodes_stops_on_403_usage_limit():
     ]
 
     credit_limit_error = ApiError(
-        status_code=403, headers={}, body={"message": "Account is over the episode usage limit"}
+        status_code=403, body={"message": "Account is over the episode usage limit"}
     )
 
     client = MagicMock()
