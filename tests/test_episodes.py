@@ -7,6 +7,7 @@ from governance.episodes import (
     executive_to_episode,
     post_to_episode,
     user_profile_to_episode,
+    delegate_vote_to_episode,
 )
 
 
@@ -353,3 +354,55 @@ def test_user_profile_to_episode_title_fallback():
     stats = {"post_count": 20, "likes_received": 5}
     ep = user_profile_to_episode(profile, stats)
     assert "community member" in ep["data"]
+
+
+# ── delegate_vote_to_episode ──────────────────────────────────────────────────
+
+def test_delegate_vote_to_episode_basic_structure():
+    record = {
+        "delegate_name": "Bonapublica",
+        "voter_address": "0xabc000",
+        "option_name": "Yes",
+        "mkr_support": "50000.5",
+        "voted_at": "2026-01-13T16:45:11+00:00",
+        "poll_id": 1246,
+        "poll_title": "Atlas Edit Weekly Cycle Proposal - Jan 13, 2026",
+    }
+    ep = delegate_vote_to_episode(record)
+    assert ep is not None
+    assert ep["type"] == "text"
+    assert ep["source_description"] == "delegate-vote-1246-0xabc000"
+    assert ep["created_at"] == "2026-01-13T16:45:11+00:00"
+    assert "Bonapublica" in ep["data"]
+    assert "Yes" in ep["data"]
+    assert "50000.5" in ep["data"]
+    assert "Atlas Edit" in ep["data"]
+
+
+def test_delegate_vote_to_episode_unknown_address_label():
+    record = {
+        "delegate_name": "0xdeadbe...",
+        "voter_address": "0xdeadbeef",
+        "option_name": "No",
+        "mkr_support": "100.0",
+        "voted_at": "2026-01-13T17:30:00+00:00",
+        "poll_id": 1246,
+        "poll_title": "Test Poll",
+    }
+    ep = delegate_vote_to_episode(record)
+    assert "0xdeadbe" in ep["data"]
+
+
+def test_delegate_vote_to_episode_abstain():
+    record = {
+        "delegate_name": "hexonaut",
+        "voter_address": "0xdef000",
+        "option_name": "Abstain",
+        "mkr_support": "72666.0",
+        "voted_at": "2026-01-13T17:00:00+00:00",
+        "poll_id": 1246,
+        "poll_title": "Atlas Edit Weekly Cycle Proposal",
+    }
+    ep = delegate_vote_to_episode(record)
+    assert "Abstain" in ep["data"]
+    assert "hexonaut" in ep["data"]

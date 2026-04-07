@@ -153,6 +153,38 @@ def user_profile_to_episode(profile: dict, stats: dict) -> dict:
     }
 
 
+def delegate_vote_to_episode(record: dict) -> dict:
+    """Convert a per-delegate vote record into a ZEP episode.
+
+    This lets ZEP build temporal edges like:
+    'Bonapublica voted Yes on Atlas Edit Jan 2026 with 50,000 MKR [valid 2026-01-13]'
+
+    record keys: delegate_name, voter_address, option_name, mkr_support,
+                 voted_at, poll_id, poll_title
+    """
+    name = record.get("delegate_name", "unknown")
+    option = record.get("option_name", "unknown")
+    mkr = record.get("mkr_support", "?")
+    voted_at = record.get("voted_at", "")
+    poll_title = record.get("poll_title", "unknown poll")
+    poll_id = record.get("poll_id", "?")
+    voter_address = record.get("voter_address", "")
+
+    text = (
+        f"Delegate vote: {name} voted '{option}' on governance poll "
+        f"'{poll_title}' (poll ID: {poll_id}) "
+        f"with {mkr} MKR voting weight. "
+        f"Voted at: {voted_at}."
+    )
+
+    return {
+        "data": text,
+        "type": "text",
+        "created_at": voted_at,
+        "source_description": f"delegate-vote-{poll_id}-{voter_address}",
+    }
+
+
 def poll_to_episode(poll: dict, tally: dict | None) -> dict | None:
     """Convert a vote.makerdao.com poll + optional tally into a ZEP episode dict."""
     title = poll.get("title", "")

@@ -182,3 +182,57 @@ def fetch_user_profile(username: str, forum_base: str = FORUM_BASE) -> dict | No
         return data.get("user")
     except Exception:
         return None
+
+
+def fetch_delegates() -> dict[str, str]:
+    """Return a mapping of voteDelegateAddress (lowercase) → delegate name.
+
+    Used to resolve on-chain voter addresses in tally votesByAddress to
+    human-readable delegate names.
+    Returns empty dict on error.
+    """
+    try:
+        data = _get(f"{VOTE_BASE}/api/delegates")
+        delegates = data.get("delegates", []) if isinstance(data, dict) else []
+        return {
+            d["voteDelegateAddress"].lower(): d["name"]
+            for d in delegates
+            if d.get("voteDelegateAddress") and d.get("name")
+        }
+    except Exception:
+        return {}
+
+
+def fetch_poll_voters(poll_id: int, poll_title: str) -> list[dict]:
+    """Return per-delegate vote records for a poll.
+
+    Each record: {delegate_name, voter_address, option_name, mkr_support,
+                  voted_at, poll_id, poll_title}
+    Resolves voter addresses to delegate names using fetch_delegates().
+    Addresses not in the delegate list are shown as truncated address.
+    Returns empty list on tally fetch error.
+    """
+    address_to_name = fetch_delegates()
+    try:
+        tally = _get(f"{VOTE_BASE}/api/polling/tally/{poll_id}")
+    except Exception:
+        return []
+
+    votes_by_address = tally.get("votesByAddress", [])
+    results = tally.get("results", [])
+    option_map = {str(r["optionId"]): r["optionName"] for r in results}
+
+    records = []
+    for v in votes_by_address:
+        addr = (v.get("voter") or "").lower()
+        option_id = str(v.get("optionIdRaw", ""))
+        records.append({
+            "delegate_name": address_to_name.get(addr, addr[:10] + "..."),
+            "voter_address": addr,
+            "option_name": option_map.get(option_id, f"option-{option_id}"),
+            "mkr_support": v.get("mkrSupport", "?"),
+            "voted_at": v.get("blockTimestamp", ""),
+            "poll_id": poll_id,
+            "poll_title": poll_title,
+        })
+    return records

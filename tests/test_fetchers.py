@@ -11,6 +11,8 @@ from governance.fetchers import (
     fetch_executives,
     fetch_top_posters,
     fetch_user_profile,
+    fetch_delegates,
+    fetch_poll_voters,
 )
 
 
@@ -369,3 +371,92 @@ def test_fetch_user_profile_returns_none_on_error():
     with patch("governance.fetchers.requests.get", side_effect=Exception("404")):
         profile = fetch_user_profile("nobody")
     assert profile is None
+
+
+# ── fetch_delegates ───────────────────────────────────────────────────────────
+
+DELEGATES_PAYLOAD = {
+    "delegates": [
+        {
+            "name": "Bonapublica",
+            "voteDelegateAddress": "0xabc000",
+            "address": "0xabc001",
+            "status": "aligned",
+            "mkrDelegated": "50000",
+            "delegatorCount": 12,
+        },
+        {
+            "name": "hexonaut",
+            "voteDelegateAddress": "0xdef000",
+            "address": "0xdef001",
+            "status": "aligned",
+            "mkrDelegated": "72666",
+            "delegatorCount": 8,
+        },
+    ]
+}
+
+TALLY_WITH_VOTES = {
+    "winningOptionName": "Yes",
+    "totalMkrActiveParticipation": "122666",
+    "results": [
+        {"optionId": 1, "optionName": "Yes", "mkrSupport": "122666", "winner": True},
+        {"optionId": 2, "optionName": "No", "mkrSupport": "0", "winner": False},
+    ],
+    "votesByAddress": [
+        {"voter": "0xabc000", "optionIdRaw": "1", "mkrSupport": "50000.0",
+         "blockTimestamp": "2026-01-13T16:45:11+00:00"},
+        {"voter": "0xdef000", "optionIdRaw": "1", "mkrSupport": "72666.0",
+         "blockTimestamp": "2026-01-13T17:00:00+00:00"},
+        {"voter": "0xunknown", "optionIdRaw": "2", "mkrSupport": "100.0",
+         "blockTimestamp": "2026-01-13T17:30:00+00:00"},
+    ],
+}
+
+
+def test_fetch_delegates_returns_name_to_address_map():
+    with patch("governance.fetchers.requests.get", return_value=mock_response(DELEGATES_PAYLOAD)):
+        delegates = fetch_delegates()
+    assert "0xabc000" in delegates
+    assert delegates["0xabc000"] == "Bonapublica"
+    assert delegates["0xdef000"] == "hexonaut"
+
+
+def test_fetch_delegates_returns_empty_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("fail")):
+        delegates = fetch_delegates()
+    assert delegates == {}
+
+
+def test_fetch_poll_voters_resolves_known_addresses():
+    with patch("governance.fetchers.requests.get") as mock_get:
+        mock_get.side_effect = [
+            mock_response(DELEGATES_PAYLOAD),
+            mock_response(TALLY_WITH_VOTES),
+        ]
+        voters = fetch_poll_voters(poll_id=1246, poll_title="Atlas Edit - Jan 2026")
+    assert len(voters) == 3
+    bonapublica = next(v for v in voters if v["delegate_name"] == "Bonapublica")
+    assert bonapublica["option_name"] == "Yes"
+    assert bonapublica["mkr_support"] == "50000.0"
+
+
+def test_fetch_poll_voters_labels_unknown_addresses():
+    with patch("governance.fetchers.requests.get") as mock_get:
+        mock_get.side_effect = [
+            mock_response(DELEGATES_PAYLOAD),
+            mock_response(TALLY_WITH_VOTES),
+        ]
+        voters = fetch_poll_voters(poll_id=1246, poll_title="Test Poll")
+    unknown = next(v for v in voters if v["voter_address"] == "0xunknown")
+    assert unknown["delegate_name"].startswith("0x")
+
+
+def test_fetch_poll_voters_returns_empty_on_tally_error():
+    with patch("governance.fetchers.requests.get") as mock_get:
+        mock_get.side_effect = [
+            mock_response(DELEGATES_PAYLOAD),
+            Exception("tally fetch failed"),
+        ]
+        voters = fetch_poll_voters(poll_id=9999, poll_title="Test")
+    assert voters == []
