@@ -126,21 +126,23 @@ def user_profile_to_episode(profile: dict, stats: dict) -> dict:
     trust_level = profile.get("trust_level", 0)
     badge_count = profile.get("badge_count", 0)
     bio = strip_html(profile.get("bio_raw") or "")[:500]
-    created_at = profile.get("created_at", "")
-    last_posted = profile.get("last_posted_at", "")
+    created_at = profile.get("created_at") or None
+    last_posted = profile.get("last_posted_at") or ""
     groups = [g.get("name", "") for g in (profile.get("groups") or [])
               if not g.get("name", "").startswith("trust_level")]
 
     post_count = stats.get("post_count", 0)
     likes_received = stats.get("likes_received", 0)
 
+    active_since = f"Active since: {created_at}. " if created_at else ""
+    last_post = f"Last post: {last_posted}. " if last_posted else ""
     text = (
         f"Sky/MakerDAO governance forum participant: @{username}. "
         f"Role: {title}. "
         f"Groups: {', '.join(groups) or 'none'}. "
         f"Trust level: {trust_level}. Badges: {badge_count}. "
         f"Activity: {post_count} posts, {likes_received} likes received. "
-        f"Active since: {created_at}. Last post: {last_posted}. "
+        f"{active_since}{last_post}"
     )
     if bio:
         text += f"Bio: {bio}"

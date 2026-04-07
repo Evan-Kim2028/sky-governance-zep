@@ -33,18 +33,26 @@ def ingest_episodes(client: Zep, episodes: list[dict | None], user_id: str = ZEP
     for ep in episodes:
         if not ep or not ep.get("data"):
             continue
+        created_at = ep.get("created_at") or None  # coerce empty string → None
         try:
             client.graph.add(
                 user_id=user_id,
                 data=ep["data"],
                 type=ep.get("type", "text"),
                 source_description=ep.get("source_description", "governance"),
-                created_at=ep.get("created_at"),
+                created_at=created_at,
             )
         except ApiError as e:
             if e.status_code == 403 and "usage limit" in str(e.body or "").lower():
                 log.warning("Monthly credit limit reached — stopping ingest. Upgrade plan or wait for reset.")
                 break
+            if e.status_code == 400:
+                log.warning(
+                    "Skipping episode (400 bad request) source=%s: %s",
+                    ep.get("source_description", "?"),
+                    str(e.body or e)[:120],
+                )
+                continue
             raise
         count += 1
     return count
