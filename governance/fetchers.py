@@ -14,6 +14,7 @@ GOV_KEYWORDS = {
 }
 
 PAGE_SIZE  = 30   # Discourse default topics-per-page
+BATCH_SIZE = 20   # Max post IDs per /posts.json batch request
 
 MAKER_FORUM_BASE = "https://forum.makerdao.com"   # historical alias — now mirrors skyeco
 SKY_FORUM_BASE   = "https://forum.skyeco.com"     # current canonical forum
@@ -74,17 +75,35 @@ def fetch_all_topics_since(
     return topics
 
 
-def fetch_topic_posts(topic_id: int, forum_base: str = FORUM_BASE) -> list[str]:
-    """Return HTML content of all posts from the first page of a topic (up to ~20).
+def fetch_all_topic_post_records(topic_id: int, forum_base: str = FORUM_BASE) -> list[dict]:
+    """Return all post dicts for a topic, fetching every page.
 
-    The Discourse /t/{id}.json response includes up to 20 posts in post_stream.posts.
-    All are returned; the caller (episodes.py) bundles them into one ZEP episode.
-    Returns empty list on any error so the caller can skip gracefully.
+    Uses post_stream.stream (list of all post IDs) from the first request,
+    then batch-fetches remaining IDs via /t/{id}/posts.json.
+    Returns dicts with keys: id, username, created_at, cooked, post_number,
+    like_count, reply_to_post_number.
+    Returns empty list on any error.
     """
     try:
         data = _get(f"{forum_base}/t/{topic_id}.json")
-        posts = data.get("post_stream", {}).get("posts", [])
-        return [p["cooked"] for p in posts if p.get("cooked")]
+        ps = data.get("post_stream", {})
+        all_ids: list[int] = ps.get("stream", [])
+        first_posts: list[dict] = ps.get("posts", [])
+
+        records = [p for p in first_posts if p.get("cooked")]
+        fetched_ids = {p["id"] for p in first_posts}
+        remaining_ids = [pid for pid in all_ids if pid not in fetched_ids]
+
+        for i in range(0, len(remaining_ids), BATCH_SIZE):
+            batch = remaining_ids[i : i + BATCH_SIZE]
+            params = [("post_ids[]", pid) for pid in batch]
+            batch_data = _get(f"{forum_base}/t/{topic_id}/posts.json", params=params)
+            batch_posts = batch_data.get("post_stream", {}).get("posts", [])
+            records.extend(p for p in batch_posts if p.get("cooked"))
+            if i + BATCH_SIZE < len(remaining_ids):
+                time.sleep(0.3)
+
+        return records
     except Exception:
         return []
 

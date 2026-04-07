@@ -4,7 +4,7 @@ import pytest
 from governance.fetchers import (
     fetch_governance_categories,
     fetch_all_topics_since,
-    fetch_topic_posts,
+    fetch_all_topic_post_records,
     fetch_polls_paginated,
     fetch_poll_tally,
     fetch_executives,
@@ -87,48 +87,111 @@ def test_fetch_all_topics_since_respects_max_pages():
     assert mock_get.call_count == 3
 
 
-# ── fetch_topic_posts ─────────────────────────────────────────────────────────
+# ── fetch_all_topic_post_records ──────────────────────────────────────────────
 
-TOPIC_PAYLOAD = {
+TOPIC_FIRST_PAGE = {
+    "post_stream": {
+        "stream": [101, 102, 103, 104, 105],
+        "posts": [
+            {"id": 101, "username": "alice", "created_at": "2026-01-10T10:00:00.000Z",
+             "cooked": "<p>First post</p>", "post_number": 1, "like_count": 3,
+             "reply_to_post_number": None},
+            {"id": 102, "username": "bob", "created_at": "2026-01-10T11:00:00.000Z",
+             "cooked": "<p>Second post</p>", "post_number": 2, "like_count": 1,
+             "reply_to_post_number": 1},
+        ],
+    }
+}
+
+TOPIC_BATCH_PAGE = {
     "post_stream": {
         "posts": [
-            {"cooked": "<p>This allocates 500M DAI to T-bills.</p>", "username": "alice"},
-            {"cooked": "<p>Risk team supports with caveats.</p>", "username": "risk"},
-            {"cooked": "<p>Community vote should proceed.</p>", "username": "bob"},
+            {"id": 103, "username": "carol", "created_at": "2026-01-10T12:00:00.000Z",
+             "cooked": "<p>Third</p>", "post_number": 3, "like_count": 0,
+             "reply_to_post_number": None},
+            {"id": 104, "username": "alice", "created_at": "2026-01-10T13:00:00.000Z",
+             "cooked": "<p>Fourth</p>", "post_number": 4, "like_count": 2,
+             "reply_to_post_number": 2},
+            {"id": 105, "username": "bob", "created_at": "2026-01-10T14:00:00.000Z",
+             "cooked": "<p>Fifth</p>", "post_number": 5, "like_count": 0,
+             "reply_to_post_number": None},
         ]
     }
 }
 
 
-def test_fetch_topic_posts_returns_all_html_strings():
-    with patch("governance.fetchers.requests.get", return_value=mock_response(TOPIC_PAYLOAD)):
-        posts = fetch_topic_posts(100)
-    assert len(posts) == 3
-    assert posts[0] == "<p>This allocates 500M DAI to T-bills.</p>"
-    assert posts[1] == "<p>Risk team supports with caveats.</p>"
-    assert posts[2] == "<p>Community vote should proceed.</p>"
+def test_fetch_all_topic_post_records_returns_all_posts():
+    with patch("governance.fetchers.requests.get") as mock_get:
+        with patch("governance.fetchers.time.sleep") as mock_sleep:
+            mock_get.side_effect = [
+                mock_response(TOPIC_FIRST_PAGE),
+                mock_response(TOPIC_BATCH_PAGE),
+            ]
+            records = fetch_all_topic_post_records(topic_id=999)
+    assert len(records) == 5
+    assert mock_sleep.call_count == 0  # only 1 batch of remaining IDs, no inter-batch sleep
 
 
-def test_fetch_topic_posts_returns_empty_list_on_error():
-    with patch("governance.fetchers.requests.get", side_effect=Exception("connection refused")):
-        posts = fetch_topic_posts(100)
-    assert posts == []
+def test_fetch_all_topic_post_records_contains_author_fields():
+    with patch("governance.fetchers.requests.get") as mock_get:
+        mock_get.side_effect = [
+            mock_response(TOPIC_FIRST_PAGE),
+            mock_response(TOPIC_BATCH_PAGE),
+        ]
+        records = fetch_all_topic_post_records(topic_id=999)
+    first = records[0]
+    assert first["username"] == "alice"
+    assert first["created_at"] == "2026-01-10T10:00:00.000Z"
+    assert first["post_number"] == 1
+    assert "cooked" in first
+    assert "like_count" in first
 
 
-def test_fetch_topic_posts_returns_empty_list_when_no_posts():
-    with patch("governance.fetchers.requests.get", return_value=mock_response({"post_stream": {"posts": []}})):
-        posts = fetch_topic_posts(100)
-    assert posts == []
+def test_fetch_all_topic_post_records_no_batch_needed_when_all_in_first_page():
+    payload = {
+        "post_stream": {
+            "stream": [101, 102],
+            "posts": [
+                {"id": 101, "username": "alice", "created_at": "2026-01-10T10:00:00.000Z",
+                 "cooked": "<p>A</p>", "post_number": 1, "like_count": 0,
+                 "reply_to_post_number": None},
+                {"id": 102, "username": "bob", "created_at": "2026-01-10T11:00:00.000Z",
+                 "cooked": "<p>B</p>", "post_number": 2, "like_count": 0,
+                 "reply_to_post_number": None},
+            ],
+        }
+    }
+    with patch("governance.fetchers.requests.get", return_value=mock_response(payload)) as mock_get:
+        with patch("governance.fetchers.time.sleep") as mock_sleep:
+            records = fetch_all_topic_post_records(topic_id=999)
+    assert mock_get.call_count == 1
+    assert len(records) == 2
+    assert mock_sleep.call_count == 0  # no sleep when no batch needed
 
 
-def test_fetch_topic_posts_skips_posts_without_cooked():
-    payload = {"post_stream": {"posts": [
-        {"cooked": "<p>Has content.</p>", "username": "alice"},
-        {"username": "bob"},  # no cooked field
-    ]}}
+def test_fetch_all_topic_post_records_returns_empty_on_error():
+    with patch("governance.fetchers.requests.get", side_effect=Exception("network error")):
+        records = fetch_all_topic_post_records(topic_id=999)
+    assert records == []
+
+
+def test_fetch_all_topic_post_records_skips_posts_without_cooked():
+    payload = {
+        "post_stream": {
+            "stream": [101, 102],
+            "posts": [
+                {"id": 101, "username": "alice", "created_at": "2026-01-10T10:00:00.000Z",
+                 "cooked": "", "post_number": 1, "like_count": 0, "reply_to_post_number": None},
+                {"id": 102, "username": "bob", "created_at": "2026-01-10T11:00:00.000Z",
+                 "cooked": "<p>Real content</p>", "post_number": 2, "like_count": 0,
+                 "reply_to_post_number": None},
+            ],
+        }
+    }
     with patch("governance.fetchers.requests.get", return_value=mock_response(payload)):
-        posts = fetch_topic_posts(100)
-    assert len(posts) == 1
+        records = fetch_all_topic_post_records(topic_id=999)
+    assert len(records) == 1
+    assert records[0]["username"] == "bob"
 
 
 # ── fetch_polls_paginated ─────────────────────────────────────────────────────
