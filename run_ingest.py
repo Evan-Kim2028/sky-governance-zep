@@ -113,9 +113,8 @@ def ingest_user_profiles(client: Zep) -> int:
     return ingest_episodes(client, episodes)
 
 
-def ingest_delegate_votes(client: Zep) -> int:
+def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
     log.info("── Delegate votes: vote.makerdao.com ──")
-    polls = fetch_polls_paginated(max_polls=MAX_POLLS)
     log.info(f"   Processing {len(polls)} polls for per-delegate vote records")
 
     episodes = []
@@ -133,9 +132,8 @@ def ingest_delegate_votes(client: Zep) -> int:
     return ingest_episodes(client, episodes)
 
 
-def ingest_polls(client: Zep) -> int:
+def ingest_polls(client: Zep, polls: list[dict]) -> int:
     log.info("── Polls: vote.makerdao.com ──")
-    polls = fetch_polls_paginated(max_polls=MAX_POLLS)
     log.info(f"   Fetched {len(polls)} polls")
 
     episodes = []
@@ -170,8 +168,10 @@ def main() -> None:
     for forum_base in BOTH_FORUMS:
         total += ingest_forum(client, forum_base)
     total += ingest_user_profiles(client)
-    total += ingest_delegate_votes(client)
-    total += ingest_polls(client)
+    polls = fetch_polls_paginated(max_polls=MAX_POLLS)
+    log.info(f"Fetched {len(polls)} polls (shared across delegate votes and poll summaries)")
+    total += ingest_delegate_votes(client, polls)
+    total += ingest_polls(client, polls)
     total += ingest_executives(client)
 
     log.info(f"── Done: {total} episodes ingested ({total}/20,000 Flex monthly credits) ──")
