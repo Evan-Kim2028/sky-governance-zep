@@ -28,7 +28,7 @@ from governance.fetchers import (
     fetch_category_by_name,
     is_gov_relevant_title,
 )
-from governance.ingest import ZEP_USER_ID, ensure_user, estimate_credits, ingest_episodes
+from governance.ingest import ZEP_GRAPH_ID, ensure_graph, estimate_credits, ingest_episodes
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
@@ -116,7 +116,7 @@ def main(dry_run: bool = False) -> None:
         return
 
     client = Zep(api_key=api_key)
-    ensure_user(client)
+    ensure_graph(client)
     ingested = ingest_episodes(client, all_episodes)
     log.info(f"── Done: {ingested} episodes ingested ──")
 

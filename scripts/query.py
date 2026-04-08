@@ -15,7 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from zep_cloud.client import Zep
 
-from governance.ingest import ZEP_USER_ID
+from governance.ingest import ZEP_GRAPH_ID
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
@@ -42,7 +42,7 @@ PREDEFINED = [
 
 def search(client: Zep, query: str, limit: int = 8, scope: str = "edges") -> list:
     results = client.graph.search(
-        user_id=ZEP_USER_ID,
+        graph_id=ZEP_GRAPH_ID,
         query=query,
         limit=limit,
         scope=scope,

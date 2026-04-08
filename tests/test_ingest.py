@@ -1,37 +1,37 @@
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 import pytest
 from zep_cloud.core.api_error import ApiError
-from governance.ingest import ensure_user, ingest_episodes, estimate_credits, ZEP_USER_ID
+from governance.ingest import ensure_graph, ingest_episodes, estimate_credits, ZEP_GRAPH_ID
 
 
 def make_client():
     return MagicMock()
 
 
-# ── ensure_user ───────────────────────────────────────────────────────────────
+# ── ensure_graph ──────────────────────────────────────────────────────────────
 
-def test_ensure_user_creates_when_not_found():
+def test_ensure_graph_creates_when_not_found():
     client = make_client()
-    client.user.get.side_effect = ApiError(status_code=404, body="not found")
-    ensure_user(client)
-    client.user.add.assert_called_once()
-    kwargs = client.user.add.call_args.kwargs
-    assert kwargs["user_id"] == ZEP_USER_ID
-    assert kwargs["metadata"]["domain"] == "DeFi governance"
+    client.graph.get.side_effect = ApiError(status_code=404, body="not found")
+    ensure_graph(client)
+    client.graph.create.assert_called_once()
+    kwargs = client.graph.create.call_args.kwargs
+    assert kwargs["graph_id"] == ZEP_GRAPH_ID
+    assert "governance" in kwargs["description"].lower()
 
 
-def test_ensure_user_skips_create_when_exists():
+def test_ensure_graph_skips_create_when_exists():
     client = make_client()
-    client.user.get.return_value = MagicMock(user_id=ZEP_USER_ID)
-    ensure_user(client)
-    client.user.add.assert_not_called()
+    client.graph.get.return_value = MagicMock(graph_id=ZEP_GRAPH_ID)
+    ensure_graph(client)
+    client.graph.create.assert_not_called()
 
 
-def test_ensure_user_get_called_with_correct_id():
+def test_ensure_graph_get_called_with_correct_id():
     client = make_client()
-    client.user.get.return_value = MagicMock()
-    ensure_user(client)
-    client.user.get.assert_called_once_with(user_id=ZEP_USER_ID)
+    client.graph.get.return_value = MagicMock()
+    ensure_graph(client)
+    client.graph.get.assert_called_once_with(graph_id=ZEP_GRAPH_ID)
 
 
 # ── ingest_episodes ───────────────────────────────────────────────────────────
@@ -47,12 +47,17 @@ def test_ingest_episodes_calls_graph_add_for_each():
     assert client.graph.add.call_count == 2
 
 
-def test_ingest_episodes_passes_correct_args():
+def test_ingest_episodes_passes_graph_id_not_user_id():
     client = make_client()
-    ep = {"data": "Forum topic about RWA vaults.", "type": "text", "created_at": "2022-05-01T00:00:00Z", "source_description": "forum-topic-123"}
+    ep = {
+        "data": "Forum topic about RWA vaults.",
+        "type": "text",
+        "created_at": "2022-05-01T00:00:00Z",
+        "source_description": "forum-topic-123",
+    }
     ingest_episodes(client, [ep])
     client.graph.add.assert_called_once_with(
-        user_id=ZEP_USER_ID,
+        graph_id=ZEP_GRAPH_ID,
         data="Forum topic about RWA vaults.",
         type="text",
         source_description="forum-topic-123",
@@ -86,52 +91,39 @@ def test_ingest_episodes_returns_zero_for_all_invalid():
 
 
 def test_ingest_episodes_skips_on_400_bad_request():
-    """400 errors (bad episode data) are skipped; ingest continues and counts only successes."""
     episodes = [
         {"data": "good episode 1", "type": "text", "source_description": "ep-1"},
         {"data": "bad episode", "type": "text", "source_description": "ep-bad"},
         {"data": "good episode 2", "type": "text", "source_description": "ep-2"},
     ]
-
     bad_request = ApiError(status_code=400, body={"message": "invalid json"})
-
     client = MagicMock()
     client.graph.add.side_effect = [None, bad_request, None]
-
     count = ingest_episodes(client, episodes)
-    assert count == 2  # bad episode skipped, both good ones counted
-    assert client.graph.add.call_count == 3  # all three attempted
+    assert count == 2
+    assert client.graph.add.call_count == 3
 
 
 def test_ingest_episodes_stops_on_403_usage_limit():
-    """403 with 'usage limit' in body stops ingestion and returns count so far."""
     episodes = [
         {"data": "ep 1", "type": "text", "source_description": "ep-1"},
         {"data": "ep 2", "type": "text", "source_description": "ep-2"},
         {"data": "ep 3", "type": "text", "source_description": "ep-3"},
     ]
-
     credit_limit_error = ApiError(
         status_code=403, body={"message": "Account is over the episode usage limit"}
     )
-
     client = MagicMock()
     client.graph.add.side_effect = [None, credit_limit_error, None]
-
     count = ingest_episodes(client, episodes)
-    assert count == 1  # only ep-1 succeeded before the limit hit
-    assert client.graph.add.call_count == 2  # stopped after the 403, ep-3 never attempted
+    assert count == 1
+    assert client.graph.add.call_count == 2
 
 
 # ── estimate_credits ──────────────────────────────────────────────────────────
 
 def test_estimate_credits_counts_valid():
-    episodes = [
-        {"data": "Episode 1"},
-        {"data": "Episode 2"},
-        None,
-        {"data": ""},
-    ]
+    episodes = [{"data": "Episode 1"}, {"data": "Episode 2"}, None, {"data": ""}]
     assert estimate_credits(episodes) == 2
 
 

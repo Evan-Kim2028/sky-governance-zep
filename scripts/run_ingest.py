@@ -45,7 +45,7 @@ from governance.fetchers import (
     fetch_user_profile,
     is_gov_relevant_title,
 )
-from governance.ingest import ZEP_USER_ID, ensure_user, estimate_credits, ingest_episodes
+from governance.ingest import ZEP_GRAPH_ID, ensure_graph, estimate_credits, ingest_episodes
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
@@ -208,8 +208,8 @@ def main() -> None:
         raise RuntimeError("ZEP_API_KEY not set — copy .env.example to .env and fill it in")
 
     client = Zep(api_key=api_key)
-    ensure_user(client)
-    log.info(f"ZEP user ready: {ZEP_USER_ID}")
+    ensure_graph(client)
+    log.info(f"ZEP graph ready: {ZEP_GRAPH_ID}")
 
     total = 0
     for forum_base in INGEST_FORUMS:
