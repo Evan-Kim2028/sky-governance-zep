@@ -58,46 +58,35 @@ PREDEFINED = [
 ]
 
 
-def _parse_date_filter(raw: str) -> tuple[str, SearchFilters | None]:
-    """Parse 'YYYY:query text' syntax into (query, SearchFilters).
+def _parse_date_filter(raw: str) -> tuple[str, SearchFilters | None, int | None]:
+    """Parse 'YYYY:query text' syntax into (query, SearchFilters | None, year | None).
 
     Examples:
-      '2025:delegate votes on Atlas' -> query='delegate votes on Atlas', valid_at filter for 2025
-      'what did hexonaut say' -> query='what did hexonaut say', no filter
-
-    The ZEP SDK valid_at field is List[List[DateFilter]] where:
-      - outer list elements are OR'd together
-      - inner list elements are AND'd together
-    A year range is expressed as [[>=start, <=end]].
+      '2025:delegate votes on Atlas' -> ('delegate votes on Atlas', SearchFilters(...), 2025)
+      'what did hexonaut say' -> ('what did hexonaut say', None, None)
     """
     if len(raw) >= 5 and raw[:4].isdigit() and raw[4] == ":":
         year = int(raw[:4])
         query = raw[5:].strip()
-        # AND condition: valid_at >= Jan 1 AND valid_at <= Dec 31
-        year_filter = [
-            [
-                DateFilter(comparison_operator=">=", date=f"{year}-01-01T00:00:00Z"),
-                DateFilter(comparison_operator="<=", date=f"{year}-12-31T23:59:59Z"),
-            ]
-        ]
+        year_filter = [[
+            DateFilter(comparison_operator=">=", date=f"{year}-01-01T00:00:00Z"),
+            DateFilter(comparison_operator="<=", date=f"{year}-12-31T23:59:59Z"),
+        ]]
         filters = SearchFilters(valid_at=year_filter)
-        return query, filters
-    return raw, None
+        return query, filters, year
+    return raw, None, None
 
 
 def search_edges(client: Zep, query: str, limit: int = DEFAULT_LIMIT,
                  search_filters: SearchFilters | None = None) -> list:
     """Search temporal fact edges. Returns facts ZEP extracted from ingested episodes."""
-    # Always exclude structural noise edge types for governance queries
-    noise_filter = NOISE_EDGE_TYPES
-
     if search_filters is not None:
         filters = SearchFilters(
-            exclude_edge_types=noise_filter,
+            exclude_edge_types=NOISE_EDGE_TYPES,
             valid_at=getattr(search_filters, "valid_at", None),
         )
     else:
-        filters = SearchFilters(exclude_edge_types=noise_filter)
+        filters = SearchFilters(exclude_edge_types=NOISE_EDGE_TYPES)
 
     results = client.graph.search(
         graph_id=ZEP_GRAPH_ID,
@@ -181,9 +170,9 @@ def main() -> None:
             query = raw
 
         # Parse year filter
-        query, date_filter = _parse_date_filter(query)
+        query, date_filter, parsed_year = _parse_date_filter(query)
 
-        year_label = f", year={query[:4]}" if date_filter else ""
+        year_label = f", year={parsed_year}" if parsed_year else ""
         print(f"Searching ZEP graph (scope={mode}, limit={DEFAULT_LIMIT}{year_label})...\n")
 
         if mode == "nodes":
