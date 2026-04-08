@@ -138,7 +138,7 @@ b:Brendan_Navigator governance stance
 uv run pytest tests/ -q
 ```
 
-78 tests, no network calls (all external APIs are mocked).
+88 tests, no network calls (all external APIs are mocked).
 
 ---
 
@@ -148,7 +148,7 @@ uv run pytest tests/ -q
 sky-governance-zep/
 ├── pyproject.toml                 # project config, dependencies, version 0.1.0
 ├── README.md
-├── CLAUDE.md                      # ZEP best practices and project conventions
+├── CLAUDE.md                      # Claude Code agent instructions — ZEP best practices and conventions
 ├── .env.example                   # copy to .env and add ZEP_API_KEY
 ├── scripts/
 │   ├── setup_graph.py             # run once: create standalone graph + custom instructions
