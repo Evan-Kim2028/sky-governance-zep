@@ -198,11 +198,27 @@ def test_ingest_episodes_skips_seen_source_descriptions():
 
         client = MagicMock()
         episodes = [
-            {"data": "already ingested content here — more than eighty characters needed to pass the filter", "source_description": "ep-already-done"},
-            {"data": "new content that has not been seen before — more than eighty characters needed", "source_description": "ep-new"},
+            {"data": "already ingested content — repeated duplicate episode that should be skipped", "source_description": "ep-already-done"},
+            {"data": "new governance content that has not been previously ingested into ZEP graph", "source_description": "ep-new"},
         ]
         count = ingest_episodes(client, episodes, ingest_log=ingest_log)
         assert count == 1
         assert client.graph.add.call_count == 1
         call_kwargs = client.graph.add.call_args.kwargs
         assert call_kwargs["source_description"] == "ep-new"
+
+
+def test_ingest_episodes_does_not_mark_400_error_in_log():
+    """Episodes that get a 400 error from ZEP are NOT marked in the ingest log — they will be retried next run."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / ".ingest_log.json"
+        ingest_log = IngestLog(log_path)
+
+        client = MagicMock()
+        client.graph.add.side_effect = ApiError(status_code=400, body={"message": "bad request"})
+
+        episodes = [{"data": "content that causes a 400 error from ZEP graph API endpoint", "source_description": "ep-bad"}]
+        count = ingest_episodes(client, episodes, ingest_log=ingest_log)
+
+        assert count == 0
+        assert not ingest_log.seen("ep-bad")  # was NOT marked — will be retried

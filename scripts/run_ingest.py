@@ -215,18 +215,19 @@ def main() -> None:
     log.info("Ingest log loaded: %d previously ingested episodes", len(ingest_log))
 
     total = 0
-    for forum_base in INGEST_FORUMS:
-        total += ingest_forum(client, forum_base, ingest_log=ingest_log)
-    total += ingest_general_discussion(client, ingest_log=ingest_log)
-    total += ingest_user_profiles(client, ingest_log=ingest_log)
-    polls = fetch_polls_paginated(max_polls=MAX_POLLS)
-    log.info(f"Fetched {len(polls)} polls (shared across delegate votes and poll summaries)")
-    total += ingest_delegate_votes(client, polls, ingest_log=ingest_log)
-    total += ingest_polls(client, polls, ingest_log=ingest_log)
-    total += ingest_executives(client, ingest_log=ingest_log)
-
-    ingest_log.save()
-    log.info("Ingest log saved.")
+    try:
+        for forum_base in INGEST_FORUMS:
+            total += ingest_forum(client, forum_base, ingest_log=ingest_log)
+        total += ingest_general_discussion(client, ingest_log=ingest_log)
+        total += ingest_user_profiles(client, ingest_log=ingest_log)
+        polls = fetch_polls_paginated(max_polls=MAX_POLLS)
+        log.info(f"Fetched {len(polls)} polls (shared across delegate votes and poll summaries)")
+        total += ingest_delegate_votes(client, polls, ingest_log=ingest_log)
+        total += ingest_polls(client, polls, ingest_log=ingest_log)
+        total += ingest_executives(client, ingest_log=ingest_log)
+    finally:
+        ingest_log.save()
+        log.info("Ingest log saved.")
 
     log.info(f"── Done: {total} episodes ingested ({total}/20,000 Flex monthly credits) ──")
     log.info("Graph processes asynchronously. Wait 90s then run scripts/query.py.")
