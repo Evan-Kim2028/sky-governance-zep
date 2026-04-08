@@ -24,3 +24,4 @@ def test_setup_instructions_calls_add_custom_instructions():
     assert ZEP_GRAPH_ID in kwargs["graph_ids"]
     assert len(kwargs["instructions"]) == 1
     assert kwargs["instructions"][0].name == "sky_governance"
+    assert kwargs["instructions"][0].text == GOVERNANCE_INSTRUCTIONS

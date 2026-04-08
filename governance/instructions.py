@@ -44,7 +44,7 @@ Tokens and assets:
 - "WBTC": Wrapped Bitcoin used as collateral in the protocol.
 
 People and roles:
-- "hexonaut", "Bonapublica", "Brendan_Navigator", "WPFS", "PALC", "Cloaky",
+- "hexonaut", "Bonapublica", "WPFS", "PALC", "Cloaky",
   "Ecosystem Actor": these are pseudonymous governance participants and roles.
 - "BA Labs" (formerly Block Analitica): a risk assessment firm providing
   governance recommendations.
