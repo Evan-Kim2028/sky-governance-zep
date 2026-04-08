@@ -34,6 +34,13 @@ def test_ensure_graph_get_called_with_correct_id():
     client.graph.get.assert_called_once_with(graph_id=ZEP_GRAPH_ID)
 
 
+def test_ensure_graph_propagates_non_404_api_error():
+    client = make_client()
+    client.graph.get.side_effect = ApiError(status_code=500, body="server error")
+    with pytest.raises(ApiError):
+        ensure_graph(client)
+
+
 # ── ingest_episodes ───────────────────────────────────────────────────────────
 
 def test_ingest_episodes_calls_graph_add_for_each():
@@ -91,6 +98,7 @@ def test_ingest_episodes_returns_zero_for_all_invalid():
 
 
 def test_ingest_episodes_skips_on_400_bad_request():
+    """400 errors (bad episode data) are skipped; ingest continues and counts only successes."""
     episodes = [
         {"data": "good episode 1", "type": "text", "source_description": "ep-1"},
         {"data": "bad episode", "type": "text", "source_description": "ep-bad"},
@@ -105,6 +113,7 @@ def test_ingest_episodes_skips_on_400_bad_request():
 
 
 def test_ingest_episodes_stops_on_403_usage_limit():
+    """403 with 'usage limit' in body stops ingestion and returns count so far."""
     episodes = [
         {"data": "ep 1", "type": "text", "source_description": "ep-1"},
         {"data": "ep 2", "type": "text", "source_description": "ep-2"},

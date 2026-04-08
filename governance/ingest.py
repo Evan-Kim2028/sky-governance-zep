@@ -19,7 +19,9 @@ def ensure_graph(client: Zep, graph_id: str = ZEP_GRAPH_ID) -> None:
     try:
         client.graph.get(graph_id=graph_id)
         log.info("Graph %s already exists", graph_id)
-    except ApiError:
+    except ApiError as e:
+        if e.status_code != 404:
+            raise
         client.graph.create(
             graph_id=graph_id,
             name="Sky/MakerDAO Governance",
