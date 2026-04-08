@@ -19,6 +19,22 @@ Ingests forum discussions (forum.skyeco.com), governance polls, delegate votes, 
 
 ---
 
+## ZEP Features Demonstrated
+
+This repo is a showcase for ZEP Cloud's graph RAG capabilities on a real governance domain.
+
+| ZEP Feature | Where | Why It Matters |
+|-------------|-------|----------------|
+| **Standalone graph** (`graph_id`) | `governance/ingest.py`, `scripts/setup_graph.py` | Domain knowledge has no "user" — a named standalone graph is the correct abstraction for shared data |
+| **Custom extraction instructions** | `governance/instructions.py`, `scripts/setup_graph.py` | Governance terms like "spell", "hat", "Atlas", "Endgame" need domain context to be classified correctly by ZEP's NLP |
+| **Temporal fact edges** | All queries in `scripts/query.py` | ZEP automatically extracts time-stamped `(subject, predicate, object)` triples from plain text — no graph logic written by hand |
+| **Retrieval tuning** (`limit=20`) | `scripts/query.py` | ZEP's 50-experiment benchmark: `limit=20` hits the accuracy/token sweet spot (~80% accuracy, ~1,400 tokens) vs ~70% at limit=5 |
+| **Combined edge + node search** (`b:` prefix) | `scripts/query.py` | Edge search = temporal facts; node search = entity summaries. Combining gives the full picture for "who is X and what do they believe?" |
+| **Search filters** (date, edge exclusion) | `scripts/query.py` | `YYYY:` prefix scopes results to a year; structural noise edges (`LOCATED_AT`, `OCCURRED_AT`) excluded by default |
+| **Deduplication log** | `governance/ingest.py`, `scripts/run_ingest.py` | Local `.ingest_log.json` prevents double-ingestion when the pipeline runs monthly on overlapping 90-day windows |
+
+---
+
 ## Installation
 
 ```bash
@@ -37,6 +53,9 @@ uv pip install -e ".[dev]"
 cp .env.example .env
 # Edit .env and replace z_your_api_key_here with your key from:
 # https://app.getzep.com → Settings → API Keys
+
+# 5. Create the ZEP graph and apply extraction instructions (run once)
+python scripts/setup_graph.py
 ```
 
 ---
@@ -75,13 +94,20 @@ Credit cost: ~1,133 credits (one-time).
 
 ### Query the graph
 
-Interactive CLI for querying the knowledge graph:
-
 ```bash
 python scripts/query.py
 ```
 
-Select a predefined query or type your own. ZEP returns extracted temporal fact edges with scores and timestamps.
+Select a predefined query or type your own. Query prefixes:
+
+| Prefix | Mode | Best for |
+|--------|------|----------|
+| *(none)* | Edge search | Temporal facts — "what did X say / what happened" |
+| `n:` | Node search | Entity summaries — "who is X", "what is Y" |
+| `b:` | Combined | Both edges and nodes — "who is X and what do they believe?" |
+| `YYYY:` | Year filter | Scoped queries — `2025: delegate votes on Atlas` |
+
+ZEP returns extracted temporal fact edges with scores and timestamps.
 
 ---
 
@@ -97,11 +123,11 @@ What is the Atlas and how has the Endgame community structured it over time?
 What did Brendan_Navigator say about governance proposals in March 2026?
 ```
 
-Prefix with `n:` to search entity nodes instead of fact edges:
+Prefix with `n:` to search entity nodes, or `b:` for combined edge + node results:
 ```
 n:hexonaut
 n:BA Labs
-n:Atlas Edit
+b:Brendan_Navigator governance stance
 ```
 
 ---
@@ -122,24 +148,25 @@ uv run pytest tests/ -q
 sky-governance-zep/
 ├── pyproject.toml                 # project config, dependencies, version 0.1.0
 ├── README.md
+├── CLAUDE.md                      # ZEP best practices and project conventions
 ├── .env.example                   # copy to .env and add ZEP_API_KEY
 ├── scripts/
-│   ├── run_ingest.py              # main pipeline — ingest governance data → ZEP
+│   ├── setup_graph.py             # run once: create standalone graph + custom instructions
+│   ├── run_ingest.py              # main pipeline — fetch governance data → ZEP (monthly)
 │   ├── backfill_general_discussion.py  # one-time historical backfill
 │   └── query.py                   # interactive graph RAG query CLI
 ├── governance/                    # core library package
 │   ├── __init__.py                # package version (0.1.0)
 │   ├── fetchers.py                # Discourse + vote.makerdao.com API fetchers
 │   ├── episodes.py                # converts raw API data → ZEP episode dicts
-│   └── ingest.py                  # ZEP graph.add wrapper with error handling
-├── tests/
-│   ├── conftest.py
-│   ├── test_fetchers.py           # 40 tests (mocked HTTP)
-│   ├── test_episodes.py           # 30 tests (pure functions)
-│   └── test_ingest.py             # 8 tests (mocked ZEP client)
-└── learnings/
-    ├── zep-graphiti-cloud-learnings.md
-    └── maker-ai-chatbot-gait-research.md
+│   ├── ingest.py                  # ZEP graph.add wrapper; IngestLog dedup; ZEP_GRAPH_ID
+│   └── instructions.py            # governance domain extraction instructions
+└── tests/
+    ├── conftest.py
+    ├── test_fetchers.py           # mocked HTTP fetcher tests
+    ├── test_episodes.py           # pure function episode conversion tests
+    ├── test_ingest.py             # mocked ZEP client ingest tests
+    └── test_setup.py              # setup_graph / custom instructions tests
 ```
 
 ---
@@ -186,7 +213,7 @@ sky-governance-zep/
 
 ZEP processes episodes asynchronously. Wait ~90 seconds after ingestion before querying.
 
-> Note: no deduplication guard exists yet — running the pipeline twice in a month will double-ingest the overlapping window. A local ingest log (tracking `source_description` → timestamp) would prevent this.
+> Note: the pipeline uses `.ingest_log.json` (gitignored) to track ingested episodes by `source_description`. Running the pipeline twice in the same month will skip already-ingested episodes — no double-ingestion.
 
 ---
 
