@@ -5,8 +5,16 @@ Interactive ZEP graph RAG query CLI for MakerDAO/Sky governance history.
 Usage:
   python scripts/query.py
 
-Enter a number to run a predefined query, or type your own free-form question.
-ZEP's temporal knowledge graph returns extracted facts with scores and timestamps.
+Query prefixes:
+  (none)   Search temporal fact edges — "what did X say / what happened"
+  n:       Search entity nodes — "who/what is X"
+  b:       Search both edges and nodes — best for rich entity questions
+  YYYY:    Scope to a year, e.g. "2025: delegate votes on Atlas"
+
+ZEP returns extracted temporal fact edges with scores and timestamps.
+
+Retrieval is tuned to limit=20, which ZEP's 50-experiment benchmark identifies
+as the sweet spot (~80% accuracy, ~1,400 tokens) vs the default of 10.
 """
 
 import os
@@ -14,10 +22,20 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from zep_cloud.client import Zep
+from zep_cloud.types import SearchFilters
+from zep_cloud.types.date_filter import DateFilter
 
 from governance.ingest import ZEP_GRAPH_ID
 
 load_dotenv(Path(__file__).parent.parent / ".env")
+
+# Retrieval limit: ZEP benchmark shows limit=20 is the sweet spot.
+# Accuracy: 5→20 = +10.4pp; 20→30 = +0.3pp (diminishing returns).
+# Ref: https://blog.getzep.com/the-retrieval-tradeoff-what-50-experiments-taught-us
+DEFAULT_LIMIT = 20
+
+# Structural edge types that add noise to governance queries.
+NOISE_EDGE_TYPES = ["LOCATED_AT", "OCCURRED_AT"]
 
 PREDEFINED = [
     # Person-level temporal graph — the core ZEP showcase
@@ -40,14 +58,68 @@ PREDEFINED = [
 ]
 
 
-def search(client: Zep, query: str, limit: int = 8, scope: str = "edges") -> list:
+def _parse_date_filter(raw: str) -> tuple[str, SearchFilters | None]:
+    """Parse 'YYYY:query text' syntax into (query, SearchFilters).
+
+    Examples:
+      '2025:delegate votes on Atlas' -> query='delegate votes on Atlas', valid_at filter for 2025
+      'what did hexonaut say' -> query='what did hexonaut say', no filter
+
+    The ZEP SDK valid_at field is List[List[DateFilter]] where:
+      - outer list elements are OR'd together
+      - inner list elements are AND'd together
+    A year range is expressed as [[>=start, <=end]].
+    """
+    if len(raw) >= 5 and raw[:4].isdigit() and raw[4] == ":":
+        year = int(raw[:4])
+        query = raw[5:].strip()
+        # AND condition: valid_at >= Jan 1 AND valid_at <= Dec 31
+        year_filter = [
+            [
+                DateFilter(comparison_operator=">=", date=f"{year}-01-01T00:00:00Z"),
+                DateFilter(comparison_operator="<=", date=f"{year}-12-31T23:59:59Z"),
+            ]
+        ]
+        filters = SearchFilters(valid_at=year_filter)
+        return query, filters
+    return raw, None
+
+
+def search_edges(client: Zep, query: str, limit: int = DEFAULT_LIMIT,
+                 search_filters: SearchFilters | None = None) -> list:
+    """Search temporal fact edges. Returns facts ZEP extracted from ingested episodes."""
+    # Always exclude structural noise edge types for governance queries
+    noise_filter = NOISE_EDGE_TYPES
+
+    if search_filters is not None:
+        filters = SearchFilters(
+            exclude_edge_types=noise_filter,
+            valid_at=getattr(search_filters, "valid_at", None),
+        )
+    else:
+        filters = SearchFilters(exclude_edge_types=noise_filter)
+
     results = client.graph.search(
         graph_id=ZEP_GRAPH_ID,
         query=query,
         limit=limit,
-        scope=scope,
+        scope="edges",
+        search_filters=filters,
     )
-    return getattr(results, scope, None) or (results if isinstance(results, list) else [])
+    return getattr(results, "edges", None) or (results if isinstance(results, list) else [])
+
+
+def search_nodes(client: Zep, query: str, limit: int = DEFAULT_LIMIT,
+                 search_filters: SearchFilters | None = None) -> list:
+    """Search entity nodes (summaries). Returns people, protocols, proposals."""
+    results = client.graph.search(
+        graph_id=ZEP_GRAPH_ID,
+        query=query,
+        limit=limit,
+        scope="nodes",
+        search_filters=search_filters,
+    )
+    return getattr(results, "nodes", None) or (results if isinstance(results, list) else [])
 
 
 def format_edge(i: int, edge) -> str:
@@ -77,7 +149,7 @@ def main() -> None:
     print("\nMakerDAO/Sky Governance — ZEP Temporal Graph RAG")
     print("=" * 55)
     print("Predefined queries (enter number) or type your own.")
-    print("Prefix with 'n:' for node search (e.g. 'n:hexonaut').")
+    print("Prefixes:  n: = node search   b: = both   YYYY: = year filter")
     print()
     for i, q in enumerate(PREDEFINED, 1):
         print(f"  {i:2}. {q}")
@@ -92,27 +164,64 @@ def main() -> None:
         if raw.lower() in ("q", "quit", "exit", ""):
             break
 
-        scope = "edges"
+        # Parse scope prefix
+        mode = "edges"
         if raw.lower().startswith("n:"):
-            scope = "nodes"
+            mode = "nodes"
+            raw = raw[2:].strip()
+        elif raw.lower().startswith("b:"):
+            mode = "both"
             raw = raw[2:].strip()
 
+        # Resolve predefined query number
         if raw.isdigit() and 1 <= int(raw) <= len(PREDEFINED):
             query = PREDEFINED[int(raw) - 1]
             print(f"\nRunning: '{query}'")
         else:
             query = raw
 
-        print(f"Searching ZEP graph (scope={scope})...\n")
-        results = search(client, query, scope=scope)
-        if not results:
-            print("  No results yet — graph may still be processing (allow ~90s after ingest).")
-            print("  Try rephrasing or use 'n:' prefix for entity/node search.")
+        # Parse year filter
+        query, date_filter = _parse_date_filter(query)
+
+        year_label = f", year={query[:4]}" if date_filter else ""
+        print(f"Searching ZEP graph (scope={mode}, limit={DEFAULT_LIMIT}{year_label})...\n")
+
+        if mode == "nodes":
+            results = search_nodes(client, query, search_filters=date_filter)
+            _print_results(results, format_node)
+        elif mode == "both":
+            edges = search_edges(client, query, search_filters=date_filter)
+            nodes = search_nodes(client, query, search_filters=date_filter)
+            if edges or nodes:
+                if nodes:
+                    print("  — Entities —")
+                    for i, item in enumerate(nodes, 1):
+                        print(format_node(i, item))
+                    print()
+                if edges:
+                    print("  — Facts —")
+                    for i, item in enumerate(edges, 1):
+                        print(format_edge(i, item))
+            else:
+                _no_results()
         else:
-            fmt = format_node if scope == "nodes" else format_edge
-            for i, item in enumerate(results, 1):
-                print(fmt(i, item))
+            results = search_edges(client, query, search_filters=date_filter)
+            _print_results(results, format_edge)
+
         print()
+
+
+def _print_results(results: list, fmt) -> None:
+    if not results:
+        _no_results()
+    else:
+        for i, item in enumerate(results, 1):
+            print(fmt(i, item))
+
+
+def _no_results() -> None:
+    print("  No results — graph may still be processing (allow ~90s after ingest).")
+    print("  Try: rephrasing, 'n:' for entity search, or 'b:' for combined search.")
 
 
 if __name__ == "__main__":
