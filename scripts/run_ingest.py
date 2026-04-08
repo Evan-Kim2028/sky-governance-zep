@@ -45,7 +45,7 @@ from governance.fetchers import (
     fetch_user_profile,
     is_gov_relevant_title,
 )
-from governance.ingest import ZEP_GRAPH_ID, ensure_graph, estimate_credits, ingest_episodes
+from governance.ingest import ZEP_GRAPH_ID, ensure_graph, estimate_credits, ingest_episodes, IngestLog
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datefmt="%H:%M:%S")
@@ -63,7 +63,7 @@ LOOKBACK_DAYS    = 90     # 3 months — focused, recent, high-signal data
 #                   + ~2,400 delegate votes + 300 polls + 5 executives = ~3,900 credits
 
 
-def ingest_forum(client: Zep, forum_base: str) -> int:
+def ingest_forum(client: Zep, forum_base: str, ingest_log: IngestLog | None = None) -> int:
     label = forum_base.replace("https://", "")
     log.info(f"── Forum: {label} ──")
     since = datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)
@@ -90,10 +90,10 @@ def ingest_forum(client: Zep, forum_base: str) -> int:
             time.sleep(0.4)  # respect Discourse rate limit between topic fetches
 
     log.info(f"   {label} post episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
-def ingest_general_discussion(client: Zep) -> int:
+def ingest_general_discussion(client: Zep, ingest_log: IngestLog | None = None) -> int:
     """Fetch General Discussion topics from the last LOOKBACK_DAYS and ingest
     governance-relevant ones as per-post episodes.
 
@@ -132,10 +132,10 @@ def ingest_general_discussion(client: Zep) -> int:
         time.sleep(0.4)  # respect Discourse rate limit between topic fetches
 
     log.info(f"   General Discussion episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
-def ingest_user_profiles(client: Zep) -> int:
+def ingest_user_profiles(client: Zep, ingest_log: IngestLog | None = None) -> int:
     log.info("── User profiles: forum.skyeco.com ──")
     top_items = fetch_top_posters(forum_base=SKY_FORUM_BASE, limit=MAX_TOP_POSTERS, period="monthly")
     log.info(f"   Fetched {len(top_items)} top posters")
@@ -155,10 +155,10 @@ def ingest_user_profiles(client: Zep) -> int:
         time.sleep(0.5)  # respect Discourse rate limit between profile fetches
 
     log.info(f"   User profile episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
-def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
+def ingest_delegate_votes(client: Zep, polls: list[dict], ingest_log: IngestLog | None = None) -> int:
     log.info("── Delegate votes: vote.makerdao.com ──")
     address_to_name = fetch_delegates()
     log.info(f"   Loaded {len(address_to_name)} delegate address mappings")
@@ -176,10 +176,10 @@ def ingest_delegate_votes(client: Zep, polls: list[dict]) -> int:
         time.sleep(0.2)  # respect vote.makerdao.com rate limit between polls
 
     log.info(f"   Delegate vote episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
-def ingest_polls(client: Zep, polls: list[dict]) -> int:
+def ingest_polls(client: Zep, polls: list[dict], ingest_log: IngestLog | None = None) -> int:
     log.info("── Polls: vote.makerdao.com ──")
     log.info(f"   Fetched {len(polls)} polls")
 
@@ -190,16 +190,16 @@ def ingest_polls(client: Zep, polls: list[dict]) -> int:
         episodes.append(poll_to_episode(poll, tally))
 
     log.info(f"   Poll episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
-def ingest_executives(client: Zep) -> int:
+def ingest_executives(client: Zep, ingest_log: IngestLog | None = None) -> int:
     log.info("── Executive votes: vote.makerdao.com ──")
     executives = fetch_executives(limit=MAX_EXECUTIVES)
     log.info(f"   Fetched {len(executives)} executive proposals")
     episodes = [executive_to_episode(e) for e in executives]
     log.info(f"   Executive episodes: {estimate_credits(episodes)} credits")
-    return ingest_episodes(client, episodes)
+    return ingest_episodes(client, episodes, ingest_log=ingest_log)
 
 
 def main() -> None:
@@ -211,16 +211,22 @@ def main() -> None:
     ensure_graph(client)
     log.info(f"ZEP graph ready: {ZEP_GRAPH_ID}")
 
+    ingest_log = IngestLog()
+    log.info("Ingest log loaded: %d previously ingested episodes", len(ingest_log))
+
     total = 0
     for forum_base in INGEST_FORUMS:
-        total += ingest_forum(client, forum_base)
-    total += ingest_general_discussion(client)
-    total += ingest_user_profiles(client)
+        total += ingest_forum(client, forum_base, ingest_log=ingest_log)
+    total += ingest_general_discussion(client, ingest_log=ingest_log)
+    total += ingest_user_profiles(client, ingest_log=ingest_log)
     polls = fetch_polls_paginated(max_polls=MAX_POLLS)
     log.info(f"Fetched {len(polls)} polls (shared across delegate votes and poll summaries)")
-    total += ingest_delegate_votes(client, polls)
-    total += ingest_polls(client, polls)
-    total += ingest_executives(client)
+    total += ingest_delegate_votes(client, polls, ingest_log=ingest_log)
+    total += ingest_polls(client, polls, ingest_log=ingest_log)
+    total += ingest_executives(client, ingest_log=ingest_log)
+
+    ingest_log.save()
+    log.info("Ingest log saved.")
 
     log.info(f"── Done: {total} episodes ingested ({total}/20,000 Flex monthly credits) ──")
     log.info("Graph processes asynchronously. Wait 90s then run scripts/query.py.")

@@ -143,3 +143,66 @@ def test_estimate_credits_all_valid():
 
 def test_estimate_credits_empty_list():
     assert estimate_credits([]) == 0
+
+
+import json
+import tempfile
+from pathlib import Path
+from governance.ingest import IngestLog
+
+
+# ── IngestLog ─────────────────────────────────────────────────────────────────
+
+def test_ingest_log_marks_and_checks():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / ".ingest_log.json"
+        ingest_log = IngestLog(log_path)
+        assert not ingest_log.seen("forum-post-123")
+        ingest_log.mark("forum-post-123")
+        assert ingest_log.seen("forum-post-123")
+
+
+def test_ingest_log_persists_across_instances():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / ".ingest_log.json"
+        log1 = IngestLog(log_path)
+        log1.mark("ep-abc")
+        log1.save()
+
+        log2 = IngestLog(log_path)
+        assert log2.seen("ep-abc")
+
+
+def test_ingest_log_empty_file_is_ok():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / ".ingest_log.json"
+        ingest_log = IngestLog(log_path)
+        assert not ingest_log.seen("anything")
+
+
+def test_ingest_log_missing_file_is_ok():
+    log_path = Path("/tmp/does_not_exist_sky_gov_test.json")
+    if log_path.exists():
+        log_path.unlink()
+    ingest_log = IngestLog(log_path)
+    assert not ingest_log.seen("anything")
+
+
+def test_ingest_episodes_skips_seen_source_descriptions():
+    """Episodes whose source_description is in the ingest log are skipped."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        log_path = Path(tmpdir) / ".ingest_log.json"
+        ingest_log = IngestLog(log_path)
+        ingest_log.mark("ep-already-done")
+        ingest_log.save()
+
+        client = MagicMock()
+        episodes = [
+            {"data": "already ingested content here — more than eighty characters needed to pass the filter", "source_description": "ep-already-done"},
+            {"data": "new content that has not been seen before — more than eighty characters needed", "source_description": "ep-new"},
+        ]
+        count = ingest_episodes(client, episodes, ingest_log=ingest_log)
+        assert count == 1
+        assert client.graph.add.call_count == 1
+        call_kwargs = client.graph.add.call_args.kwargs
+        assert call_kwargs["source_description"] == "ep-new"

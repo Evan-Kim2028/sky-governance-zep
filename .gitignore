@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# Local ingest dedup log — pipeline state, not source code
+.ingest_log.json
+
 # Python
 __pycache__/
 *.py[cod]

@@ -1,5 +1,8 @@
 # governance/ingest.py
+import json
 import logging
+from datetime import datetime, timezone
+from pathlib import Path
 
 from zep_cloud.client import Zep
 from zep_cloud.core.api_error import ApiError
@@ -7,6 +10,42 @@ from zep_cloud.core.api_error import ApiError
 log = logging.getLogger(__name__)
 
 ZEP_GRAPH_ID = "sky-governance"
+
+
+class IngestLog:
+    """Local deduplication log — tracks ingested source_descriptions to prevent double-ingest.
+
+    Stored as JSON at the given path (default: project root .ingest_log.json).
+    The file is gitignored — it's local pipeline state, not source code.
+
+    Usage:
+        log = IngestLog()
+        if not log.seen(ep["source_description"]):
+            # ingest ep
+            log.mark(ep["source_description"])
+        log.save()
+    """
+
+    def __init__(self, path: Path = Path(".ingest_log.json")) -> None:
+        self._path = path
+        self._data: dict[str, str] = {}
+        if path.exists():
+            try:
+                self._data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError):
+                self._data = {}
+
+    def seen(self, key: str) -> bool:
+        return key in self._data
+
+    def mark(self, key: str) -> None:
+        self._data[key] = datetime.now(timezone.utc).isoformat()
+
+    def save(self) -> None:
+        self._path.write_text(json.dumps(self._data, indent=2))
+
+    def __len__(self) -> int:
+        return len(self._data)
 
 
 def ensure_graph(client: Zep, graph_id: str = ZEP_GRAPH_ID) -> None:
@@ -34,8 +73,17 @@ def ensure_graph(client: Zep, graph_id: str = ZEP_GRAPH_ID) -> None:
         log.info("Created standalone graph %s", graph_id)
 
 
-def ingest_episodes(client: Zep, episodes: list[dict | None], graph_id: str = ZEP_GRAPH_ID) -> int:
+def ingest_episodes(
+    client: Zep,
+    episodes: list[dict | None],
+    graph_id: str = ZEP_GRAPH_ID,
+    ingest_log: "IngestLog | None" = None,
+) -> int:
     """Send valid episodes to ZEP graph. Returns count of episodes ingested.
+
+    If ingest_log is provided, episodes whose source_description is already in
+    the log are skipped (deduplication). The caller is responsible for calling
+    ingest_log.save() after all batches are complete.
 
     Stops early and logs a warning if the free-tier monthly credit limit is reached.
     """
@@ -43,13 +91,16 @@ def ingest_episodes(client: Zep, episodes: list[dict | None], graph_id: str = ZE
     for ep in episodes:
         if not ep or not ep.get("data"):
             continue
+        source = ep.get("source_description", "governance")
+        if ingest_log is not None and ingest_log.seen(source):
+            continue
         created_at = ep.get("created_at") or None  # coerce empty string → None
         try:
             client.graph.add(
                 graph_id=graph_id,
                 data=ep["data"],
                 type=ep.get("type", "text"),
-                source_description=ep.get("source_description", "governance"),
+                source_description=source,
                 created_at=created_at,
             )
         except ApiError as e:
@@ -59,11 +110,13 @@ def ingest_episodes(client: Zep, episodes: list[dict | None], graph_id: str = ZE
             if e.status_code == 400:
                 log.warning(
                     "Skipping episode (400 bad request) source=%s: %s",
-                    ep.get("source_description", "?"),
+                    source,
                     str(e.body or e)[:120],
                 )
                 continue
             raise
+        if ingest_log is not None:
+            ingest_log.mark(source)
         count += 1
     return count
 
